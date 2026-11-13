@@ -1,0 +1,13 @@
+import { chromium } from 'playwright';
+import { createServer } from 'vite';
+import { writeFileSync } from 'node:fs';
+const server = await createServer({ server: { port: 5197 }, logLevel: 'error' }); await server.listen();
+const browser = await chromium.launch(); const page = await browser.newPage();
+page.on('pageerror', (e) => console.log('ERR', String(e).slice(0, 300)));
+await page.goto(`http://127.0.0.1:${server.config.server.port}/tools/preview3d/analyze.html`);
+await page.waitForFunction(() => window.__done, null, { timeout: 240000 });
+const d = await page.evaluate(() => window.__done);
+writeFileSync('tools/out/clips.json', JSON.stringify(d, null, 1));
+console.log('rest', JSON.stringify(d.rest), 'rootTracks', JSON.stringify(d.rootTracks));
+for (const [k, c] of Object.entries(d.clips)) console.log(k, c.d, 'travel', c.travel.join(','), 'y', c.y.join('..'), c.peaks ? 'peaks ' + c.peaks.map((p) => p.join('@v')).join(' ') : '');
+await browser.close(); await server.close(); process.exit(0);
