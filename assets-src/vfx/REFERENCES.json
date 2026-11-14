@@ -1,0 +1,38 @@
+{
+  "collectedOn": "2026-11-14",
+  "assets": [
+    {
+      "title": "Weapon Slash - Effect",
+      "author": "Cethiel",
+      "source": "https://opengameart.org/content/weapon-slash-effect",
+      "download": "https://opengameart.org/sites/default/files/Everything_0.zip",
+      "license": "CC0-1.0",
+      "local": "cethiel-slashes/Everything.zip",
+      "use": "Reference for solid blade silhouettes, bright inner strokes, broken edges, and fast cut-through motion."
+    },
+    {
+      "title": "Particle Pack",
+      "author": "Kenney",
+      "source": "https://kenney.nl/assets/particle-pack",
+      "authorUpload": "https://opengameart.org/content/particle-pack-80-sprites",
+      "download": "https://opengameart.org/sites/default/files/kenney_particlePack.zip",
+      "license": "CC0-1.0",
+      "local": "kenney-particles/kenney_particlePack.zip",
+      "use": "Reference collection for impact flashes, radial fragments, electricity, and vertical light masks."
+    }
+  ],
+  "breakdowns": [
+    {
+      "title": "Sword Slash VFX - Niagara Tutorial",
+      "author": "Gabriel Aguiar Prod.",
+      "url": "https://www.youtube.com/watch?v=djlnnPvFR0Q",
+      "focus": "Bright, dark and secondary slash layers; impact particles."
+    },
+    {
+      "title": "Project L Slash FX in Unreal Engine 5.2 Niagara Tutorial",
+      "url": "https://dev.epicgames.com/community/learning/tutorials/vy511/project-l-slash-fx-in-unreal-engine-5-2-niagara-tutorial",
+      "focus": "Graphic, solid arc masks and animation timing."
+    }
+  ],
+  "implementation": "Runtime blade masks are authored procedurally in src/art/bladeFx.ts. Downloaded reference packs are kept here, outside public build assets."
+}

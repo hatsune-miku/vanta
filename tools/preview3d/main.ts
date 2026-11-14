@@ -1,66 +1,71 @@
-// Contact sheet: the CC0 mannequin playing library clips in side view, to judge the look before adopting it.
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+// Render the production costumes and skeletons, including both facing directions.
+import * as THREE from 'three'
 
-const W = 320, H = 360;
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
-renderer.setSize(W, H); renderer.setPixelRatio(1);
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-const scene = new THREE.Scene();
-const cam = new THREE.OrthographicCamera(-1.25, 1.25, 2.3, -0.5, 0.1, 50);
-cam.position.set(0, 0.9, 10); cam.lookAt(0, 0.9, 0);
-scene.add(new THREE.HemisphereLight(0x8fb8ff, 0x101624, 1.1));
-const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(2, 4, 6); scene.add(key);
-const rimA = new THREE.DirectionalLight(0x2f9bff, 5); rimA.position.set(-4, 2, -3); scene.add(rimA);
-const rimB = new THREE.DirectionalLight(0xff4fc8, 3.5); rimB.position.set(4, 1, -4); scene.add(rimB);
+import { Body3D, SKINS3, Stage3D } from '../../src/three/stage3d'
 
-const loader = new GLTFLoader();
-const load = (u: string) => loader.loadAsync(u);
-const [body, a1, a2] = await Promise.all([load('/models/Mannequin_F.glb'), load('/models/UAL1_Standard.glb'), load('/models/UAL2_Standard.glb')]);
-const clips = [...a1.animations, ...a2.animations];
-const model = body.scene;
-model.rotation.y = Math.PI / 2; // face screen-right
-model.traverse((o) => {
-  const m = o as THREE.Mesh;
-  if (!m.isMesh) return;
-  const mats = Array.isArray(m.material) ? m.material : [m.material];
-  m.material = mats.map((mt) => new THREE.MeshStandardMaterial(mt.name === 'M_Joints'
-    ? { color: 0x1a2030, metalness: 0.7, roughness: 0.35 }
-    : { color: 0xdfe6f2, metalness: 0.35, roughness: 0.42 })) as any;
-  if (!Array.isArray(m.material) || (m.material as any).length === 1) m.material = (m.material as any)[0];
-});
-// a simple hard-light blade in the right hand
-const hand = model.getObjectByName('hand_r')!;
-const blade = new THREE.Mesh(new THREE.BoxGeometry(0.02, 1.05, 0.05), new THREE.MeshBasicMaterial({ color: 0x9fd4ff }));
-const grip = new THREE.Group(); grip.add(blade); blade.position.y = 0.55; hand.add(grip);
-(window as any).__grip = grip;
-scene.add(model);
-const mixer = new THREE.AnimationMixer(model);
-
-const sheet = (document.getElementById('sheet') as HTMLCanvasElement).getContext('2d')!;
-sheet.fillStyle = '#0a1220'; sheet.fillRect(0, 0, 1920, 1080);
-const rows: [string, number[]][] = [
-  ['Sword_Regular_A', [0.1, 0.3, 0.5, 0.7, 0.9]],
-  ['Sword_Regular_B', [0.1, 0.3, 0.5, 0.7, 0.9]],
-  ['Sprint_Loop', [0, 0.25, 0.5]], ['Sword_Dash', [0.3, 0.6]],
-  ['Sword_Heavy_Combo', [0.1, 0.25, 0.4, 0.6, 0.8]],
-];
-let col = 0, row = 0;
-const missing: string[] = [];
-for (const [name, ts] of rows) {
-  const clip = clips.find((c) => c.name === name);
-  if (!clip) { missing.push(name); continue; }
-  mixer.stopAllAction();
-  const act = mixer.clipAction(clip); act.play();
-  for (const t of ts) {
-    mixer.setTime(t * clip.duration);
-    // keep the figure centred regardless of root motion
-    const p = new THREE.Vector3(); model.getObjectByName('pelvis')!.getWorldPosition(p);
-    cam.position.x = p.x; cam.updateMatrixWorld();
-    renderer.render(scene, cam);
-    sheet.drawImage(renderer.domElement, col * W, row * H);
-    sheet.fillStyle = '#9fd4ff'; sheet.font = '16px sans-serif'; sheet.fillText(`${name} @${t}`, col * W + 8, row * H + 20);
-    if (++col >= 6) { col = 0; row++; }
-  }
+const W = 320,
+  H = 400
+const stage = await Stage3D.load()
+stage.renderer.setSize(W, H, false)
+const canvas = document.getElementById('sheet') as HTMLCanvasElement
+const sheet = canvas.getContext('2d')!
+const samples = [
+  ...Object.keys(SKINS3).map((skin) => ({
+    skin,
+    clip: skin === 'gunner' ? 'Pistol_Idle_Loop' : 'Sword_Idle',
+    t: 0.25,
+    facing: 1,
+    portrait: true,
+  })),
+  ...[
+    ['Sword_Regular_A', 0.3],
+    ['Sword_Regular_B', 0.5],
+    ['Sprint_Loop', 0.25],
+    ['Sword_Dash', 0.6],
+    ['Sword_Heavy_Combo', 0.4],
+    ['NinjaJump_Idle_Loop', 0.3],
+    ['Spell_Simple_Enter', 0.45],
+    ['Spell_Simple_Shoot', 0.4],
+  ].flatMap(([clip, t]) =>
+    [1, -1].map((facing) => ({ skin: 'vanta', clip: String(clip), t: Number(t), facing, portrait: false }))
+  ),
+]
+canvas.width = W * 6
+canvas.height = Math.ceil(samples.length / 6) * H
+const missing: string[] = []
+for (const [i, sample] of samples.entries()) {
+  const x = (i % 6) * W,
+    y = Math.floor(i / 6) * H
+  sheet.fillStyle = i % 2 ? '#111c2a' : '#0d1724'
+  sheet.fillRect(x, y, W, H)
+  const body = new Body3D(sample.skin)
+  body.setPos(0, 0, sample.facing)
+  if (sample.portrait) body.root.rotation.y = 0.45
+  const clip = stage.characterClip(sample.skin, sample.clip)
+  if (!clip) missing.push(sample.clip)
+  body.apply({ clip: sample.clip, time: sample.t * (clip?.duration ?? 1), prev: null, prevTime: 0, w: 1 })
+  body.root.updateMatrixWorld(true)
+  const bounds = new THREE.Box3().setFromObject(body.root, true)
+  const center = bounds.getCenter(new THREE.Vector3()),
+    size = bounds.getSize(new THREE.Vector3())
+  const halfH = Math.max(size.y / 2 + 25, ((size.x / 2 + 20) * H) / W)
+  const cam = stage.cam
+  cam.left = (-halfH * W) / H
+  cam.right = (halfH * W) / H
+  cam.top = halfH
+  cam.bottom = -halfH
+  cam.position.set(center.x, center.y, 2000)
+  cam.updateProjectionMatrix()
+  cam.updateMatrixWorld()
+  stage.renderer.render(stage.scene, cam)
+  sheet.drawImage(stage.canvas, x, y)
+  sheet.fillStyle = '#bdd1e8'
+  sheet.font = 'bold 16px sans-serif'
+  sheet.fillText(
+    sample.portrait ? sample.skin.toUpperCase() : `${sample.clip} / ${sample.facing > 0 ? 'R' : 'L'}`,
+    x + 16,
+    y + 26
+  )
+  body.destroy()
 }
-(window as any).__done = { clips: clips.map((c) => `${c.name}:${c.duration.toFixed(2)}`), missing };
+;(window as any).__done = { missing, clips: [...stage.clips.keys()] }

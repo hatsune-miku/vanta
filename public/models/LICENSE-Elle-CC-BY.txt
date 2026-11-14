@@ -1,0 +1,16 @@
+Elle - Sci-Fi Anime Girl
+Author: Kai Sama (@kaisamafab)
+https://sketchfab.com/kaisamafab
+Source: https://sketchfab.com/3d-models/elle-sci-fi-anime-girl-e16bf07a62e54b8ea99ca2653675bb41
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+
+Downloaded from the author's Sketchfab listing on 2026-11-13.
+
+VANTA modifications: normalised scale and origin; removed unused joint palette
+entries; resized/compressed textures; retargeted Quaternius Universal Animation
+Library clips (CC0); silver hair, cyan eyes and clothing material treatment;
+procedural sword attachment.
+Authored heroine idle, trailing-sword sprint, tucked jump and expressive attack
+poses are baked over the retargeted CC0 motion.
+The original file is kept at assets-src/models/Elle.glb.

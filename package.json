@@ -8,7 +8,21 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4173 --strictPort",
     "typecheck": "tsc --noEmit",
-    "deploy": "pnpm build && rsync -a --delete dist/ /var/www/vanta/"
+    "test": "pnpm test:flow && pnpm test:combat && pnpm test:enemy && pnpm test:overload && pnpm test:advanced && pnpm test:revision && pnpm test:rig && pnpm test:bot && pnpm test:exec",
+    "test:flow": "node tools/play.mjs test tools/flow-check.mjs",
+    "test:combat": "node tools/play.mjs test tools/combat-check.mjs",
+    "test:enemy": "node tools/play.mjs test tools/enemy-check.mjs",
+    "test:advanced": "node tools/play.mjs test tools/advanced-check.mjs",
+    "test:revision": "node tools/play.mjs test tools/revision-check.mjs",
+    "test:overload": "node tools/play.mjs test tools/overload-check.mjs",
+    "test:rig": "node tools/play.mjs test tools/rig-check.mjs",
+    "test:bot": "node tools/play.mjs test tools/bot.mjs",
+    "test:exec": "node tools/play.mjs test tools/exec-capture.mjs",
+    "test:live": "pnpm build && node tools/live.mjs",
+    "art:preview": "node tools/preview3d.mjs",
+    "models:pack": "node tools/pack-models.mjs && node tools/pack-elle.mjs",
+    "deploy:check": "pnpm build && rsync -azn --delete --itemize-changes --exclude=.DS_Store -e 'ssh -o BatchMode=yes -o ConnectTimeout=10' dist/ miku@vanillacake.cn:/var/www/vanta/",
+    "deploy": "pnpm build && rsync -az --delete --exclude=.DS_Store -e 'ssh -o BatchMode=yes -o ConnectTimeout=10' dist/ miku@vanillacake.cn:/var/www/vanta/"
   },
   "dependencies": {
     "phaser": "4.2.1",
@@ -16,9 +30,13 @@
   },
   "devDependencies": {
     "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
     "@gltf-transform/functions": "^4.5.1",
+    "@trivago/prettier-plugin-sort-imports": "^6.0.2",
     "@types/three": "^0.187.0",
     "playwright": "^1.65.0",
+    "prettier": "^3.10.1",
+    "sharp": "^0.35.5",
     "typescript": "^7.0.2",
     "vite": "^8.3.8"
   }
