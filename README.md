@@ -84,7 +84,7 @@ VANTA_URL=https://vanta.vanillacake.cn node tools/live.mjs  # 公网操作回归
 
 ## 光效参考
 
-`assets-src/vfx/REFERENCES.json` 记录素材来源和使用方式。已收集 Cethiel 的 Weapon Slash - Effect 及 Kenney 的 Particle Pack 原始压缩包、预览与许可信息，供后续美术迭代使用。运行时的高饱和体积刀光和垂直剑气由 `src/art/bladeFx.ts` 生成，采用不规则曲率、宽窄变化和撕裂内缘，叠加半透明体积、饱和辉光与断续高亮刃线；普通模式保持单刃，过载模式保留错位的蓝粉双刃。参考包不加入线上下载资源。
+`assets-src/vfx/REFERENCES.json` 记录素材来源和使用方式。已收集 Cethiel 的 Weapon Slash - Effect 及 Kenney 的 Particle Pack 原始压缩包、预览与许可信息，供后续美术迭代使用。运行时的高饱和体积刀光和垂直剑气由 `src/art/bladeFx.ts` 生成：刀光是规整的月牙弧，尾端细、近刀尖处最宽，叠加半透明体积、饱和辉光与一道连续的高亮刃线，不做曲率扰动、撕裂或断线处理；普通模式保持单刃，过载模式保留错位的蓝粉双刃。参考包不加入线上下载资源。
 
 ## 自动化测试
 

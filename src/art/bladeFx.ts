@@ -2,19 +2,7 @@ import * as Phaser from 'phaser'
 
 import { tex } from './textures'
 
-/** Stable, aperiodic variation keeps the stroke rough without flickering between frames. */
-function bladeNoise(x: number, seed: number) {
-  function hash(n: number) {
-    const v = Math.sin(n * 127.1 + seed * 311.7) * 43758.5453
-    return v - Math.floor(v)
-  }
-  const i = Math.floor(x),
-    f = x - i,
-    k = f * f * (3 - 2 * f)
-  return hash(i) * (1 - k) + hash(i + 1) * k
-}
-
-/** An uneven cutting edge, torn inner wake and broken filaments share one translucent stroke. */
+/** A clean crescent: translucent volume that thickens toward the leading tip, under one continuous bright edge. */
 function bladeTexture(scene: Phaser.Scene, key: string, sweep: number, thickness: number) {
   const size = 512,
     radius = 234,
@@ -33,60 +21,26 @@ function bladeTexture(scene: Phaser.Scene, key: string, sweep: number, thickness
     const t = Math.max(0, Math.min(1, x))
     return t * t * (3 - 2 * t)
   }
-  const profile = Array.from({ length: 1025 }, (_, i) => {
-    const t = i / 1024,
-      seed = sweep * 7 + thickness * 31,
-      bend = bladeNoise(t * 4.3, seed),
-      edge = bladeNoise(t * 21, seed + 8),
-      wake = bladeNoise(t * 13, seed + 17),
-      grain = bladeNoise(t * 63, seed + 29)
-    return {
-      // Broad asymmetry breaks the compass arc; finer erosion gives the edge its torn silhouette.
-      outer: radius - 38 + 37 * Math.sin(t * Math.PI * 0.88) + (bend - 0.5) * 38 + (edge - 0.5) * 25,
-      width: radius * thickness * Math.pow(Math.sin(Math.PI * t), 0.8) * (0.4 + 0.6 * t) * (0.32 + wake * 1.25),
-      ends: feather(t / 0.07) * feather((1 - t) / 0.055),
-      edge,
-      wake,
-      grain,
-    }
-  })
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const dx = x + 0.5 - size / 2,
         dy = y + 0.5 - size / 2,
         t = Math.atan2(dy, dx) / sweep + 0.5
       if (t <= 0 || t >= 1) continue
-      const p = profile[Math.round(t * 1024)],
-        u = (p.outer - Math.hypot(dx, dy)) / p.width
+      // The outer edge is a true arc. The body is thin at the tail, widest near the leading tip, and closes at both ends.
+      const width = radius * thickness * 0.95 * Math.pow(Math.sin(Math.PI * t), 0.8) * (0.4 + 0.6 * t),
+        u = (radius - Math.hypot(dx, dy)) / width
       if (u <= 0 || u >= 1) continue
-      const edge = feather(u / 0.045) * feather((1 - u) / (0.14 + p.wake * 0.25)),
-        // Uneven diagonal rifts break the polished crescent into a fast, torn stroke.
-        tearLine = t * 27 + u * 1.6 + p.wake * 0.8,
-        tear = Math.pow(Math.max(0, Math.sin(tearLine * Math.PI)), 18),
-        cutT = t - u * 0.045,
-        rift = Math.max(
-          Math.exp(-Math.pow((cutT - 0.17) / 0.012, 2)),
-          Math.exp(-Math.pow((cutT - 0.39) / 0.008, 2)),
-          Math.exp(-Math.pow((cutT - 0.76) / 0.015, 2))
-        ),
-        erosion = (1 - tear * feather((u - 0.12) / 0.5) * (0.45 + p.grain * 0.5)) * (1 - rift * 0.98),
-        breakUp = 0.48 + 0.52 * feather((p.grain - 0.13) / 0.5),
+      const ends = feather(t / 0.07) * feather((1 - t) / 0.055),
+        edge = feather(u / 0.045) * feather((1 - u) / 0.26),
         ridge = Math.exp(-Math.pow((u - 0.28) / 0.3, 2)),
-        striation = 0.83 + 0.11 * Math.sin(t * 105 + u * 19) + 0.06 * Math.sin(t * 39 - u * 34),
-        luminance = Math.round((0.23 + ridge * 0.77) * striation * 255),
-        alpha = p.ends * edge * (0.3 + 0.6 * ridge) * erosion,
-        edgeAt = 0.16 + p.edge * 0.11,
-        highlight = Math.exp(-Math.pow((u - edgeAt) / (0.024 + p.wake * 0.024), 2)),
-        filament = Math.exp(-Math.pow((u - 0.53 - p.wake * 0.16) / 0.02, 2)) * 0.2,
         i = (y * size + x) * 4
-      bodyPixels.data[i] = bodyPixels.data[i + 1] = bodyPixels.data[i + 2] = luminance
-      bodyPixels.data[i + 3] = Math.round(alpha * 255)
+      bodyPixels.data[i] = bodyPixels.data[i + 1] = bodyPixels.data[i + 2] = Math.round((0.23 + ridge * 0.77) * 255)
+      bodyPixels.data[i + 3] = Math.round(ends * edge * (0.3 + 0.6 * ridge) * 255)
       spinePixels.data[i] = spinePixels.data[i + 1] = spinePixels.data[i + 2] = 255
-      spinePixels.data[i + 3] = Math.round(p.ends * (highlight * breakUp * 0.85 + filament) * erosion * 255)
+      spinePixels.data[i + 3] = Math.round(ends * Math.exp(-Math.pow((u - 0.2) / 0.036, 2)) * 0.85 * 255)
       hotPixels.data[i] = hotPixels.data[i + 1] = hotPixels.data[i + 2] = 255
-      hotPixels.data[i + 3] = Math.round(
-        p.ends * edge * Math.exp(-Math.pow((u - edgeAt) / (0.06 + p.wake * 0.055), 2)) * breakUp * erosion * 255
-      )
+      hotPixels.data[i + 3] = Math.round(ends * edge * Math.exp(-Math.pow((u - 0.2) / 0.09, 2)) * 255)
     }
   }
   bg.putImageData(bodyPixels, 0, 0)
