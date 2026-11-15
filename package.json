@@ -17,6 +17,8 @@
     "test:overload": "node tools/play.mjs test tools/overload-check.mjs",
     "test:rig": "node tools/play.mjs test tools/rig-check.mjs",
     "test:tutorial": "node tools/play.mjs 'test&tutorial' tools/tutorial-check.mjs",
+    "test:skills": "node tools/skills-check.mjs",
+    "video:skills": "node tools/capture-skills.mjs",
     "test:bot": "node tools/play.mjs test tools/bot.mjs",
     "test:bot2": "node tools/play.mjs 'test&level=2' tools/bot.mjs",
     "test:exec": "node tools/play.mjs test tools/exec-capture.mjs",

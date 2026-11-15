@@ -1,0 +1,29 @@
+{
+  "assets": [
+    {
+      "name": "icon",
+      "url": "/promo/icon.png",
+      "width": 1024,
+      "height": 1024,
+      "format": "png",
+      "bytes": 2159224
+    },
+    {
+      "name": "cover",
+      "url": "/promo/cover.png",
+      "width": 1024,
+      "height": 576,
+      "format": "png",
+      "bytes": 1356734
+    },
+    {
+      "name": "background",
+      "url": "/promo/background.png",
+      "width": 1024,
+      "height": 576,
+      "format": "png",
+      "bytes": 1121255
+    }
+  ],
+  "coverCharacters": false
+}

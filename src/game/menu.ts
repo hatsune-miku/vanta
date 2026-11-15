@@ -93,6 +93,7 @@ export class Menu {
   /** the row under the cursor on the stage screen: the stages first, then the extras */
   row: number
   skill = 0
+  previewPaused = false
   /** seconds since it opened, and since the selection last moved: what its unfolding is timed from */
   age = 0
   moved = 0
@@ -129,7 +130,9 @@ export class Menu {
       if (step) {
         this.skill = (this.skill + step + SKILLS.length) % SKILLS.length
         this.moved = 0
+        this.previewPaused = false
       }
+      if (confirm) this.previewPaused = !this.previewPaused
       if (back || skills) {
         if (this.direct) return { type: 'close' }
         this.tab = 'stage'

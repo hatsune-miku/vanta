@@ -1,0 +1,222 @@
+{
+  "fps": 30,
+  "width": 1024,
+  "height": 576,
+  "audio": false,
+  "skills": [
+    {
+      "id": "light",
+      "name": "轻击",
+      "seconds": 8,
+      "moves": [
+        "l1",
+        "l2",
+        "l3",
+        "l4",
+        "l5",
+        "al1",
+        "al2",
+        "al3"
+      ],
+      "states": [
+        "free",
+        "attack"
+      ],
+      "dives": [],
+      "counter": false,
+      "verdict": false,
+      "surge": false,
+      "overload": false,
+      "dashes": 0,
+      "execs": 0,
+      "anchor": false
+    },
+    {
+      "id": "heavy",
+      "name": "重击",
+      "seconds": 6.5,
+      "moves": [
+        "h1",
+        "h2",
+        "h3",
+        "gearLand"
+      ],
+      "states": [
+        "free",
+        "attack",
+        "gear"
+      ],
+      "dives": [],
+      "counter": false,
+      "verdict": false,
+      "surge": false,
+      "overload": false,
+      "dashes": 0,
+      "execs": 0,
+      "anchor": false
+    },
+    {
+      "id": "exec",
+      "name": "处决",
+      "seconds": 4,
+      "moves": [],
+      "states": [
+        "free"
+      ],
+      "dives": [],
+      "counter": false,
+      "verdict": false,
+      "surge": false,
+      "overload": false,
+      "dashes": 0,
+      "execs": 1,
+      "anchor": false
+    },
+    {
+      "id": "dash",
+      "name": "闪避",
+      "seconds": 5,
+      "moves": [],
+      "states": [
+        "free",
+        "dash"
+      ],
+      "dives": [],
+      "counter": false,
+      "verdict": false,
+      "surge": false,
+      "overload": false,
+      "dashes": 4,
+      "execs": 0,
+      "anchor": false
+    },
+    {
+      "id": "extreme",
+      "name": "极限闪避",
+      "seconds": 4,
+      "moves": [],
+      "states": [
+        "free",
+        "dash"
+      ],
+      "dives": [],
+      "counter": true,
+      "verdict": false,
+      "surge": false,
+      "overload": false,
+      "dashes": 1,
+      "execs": 0,
+      "anchor": false
+    },
+    {
+      "id": "curtain",
+      "name": "光幕",
+      "seconds": 5,
+      "moves": [
+        "chargeRelease"
+      ],
+      "states": [
+        "free",
+        "charge",
+        "attack"
+      ],
+      "dives": [],
+      "counter": false,
+      "verdict": false,
+      "surge": true,
+      "overload": false,
+      "dashes": 0,
+      "execs": 0,
+      "anchor": false
+    },
+    {
+      "id": "overload",
+      "name": "超载",
+      "seconds": 6,
+      "moves": [
+        "h1",
+        "h2"
+      ],
+      "states": [
+        "free",
+        "attack",
+        "dash"
+      ],
+      "dives": [],
+      "counter": false,
+      "verdict": false,
+      "surge": false,
+      "overload": true,
+      "dashes": 1,
+      "execs": 0,
+      "anchor": true
+    },
+    {
+      "id": "verdict",
+      "name": "超载光幕",
+      "seconds": 7,
+      "moves": [
+        "chargeRelease"
+      ],
+      "states": [
+        "free",
+        "charge",
+        "attack"
+      ],
+      "dives": [],
+      "counter": false,
+      "verdict": true,
+      "surge": false,
+      "overload": true,
+      "dashes": 0,
+      "execs": 0,
+      "anchor": false
+    },
+    {
+      "id": "plunge",
+      "name": "下劈 · 重下劈",
+      "seconds": 5,
+      "moves": [
+        "diveLand"
+      ],
+      "states": [
+        "free",
+        "dive",
+        "attack"
+      ],
+      "dives": [
+        false,
+        true
+      ],
+      "counter": false,
+      "verdict": false,
+      "surge": false,
+      "overload": false,
+      "dashes": 0,
+      "execs": 0,
+      "anchor": false
+    },
+    {
+      "id": "lunge",
+      "name": "闪避重击",
+      "seconds": 4,
+      "moves": [
+        "h1",
+        "h2"
+      ],
+      "states": [
+        "free",
+        "attack",
+        "lunge"
+      ],
+      "dives": [],
+      "counter": false,
+      "verdict": false,
+      "surge": false,
+      "overload": false,
+      "dashes": 0,
+      "execs": 0,
+      "anchor": false
+    }
+  ]
+}

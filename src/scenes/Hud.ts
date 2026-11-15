@@ -7,6 +7,7 @@ import { KEY_LABEL } from '../core/input'
 import { clamp, damp, smooth } from '../core/util'
 import { type MenuExtra, SKILLS } from '../game/menu'
 import { OVERLOAD_DURATION, SHIELD_COST } from '../game/player'
+import { SkillPreview } from '../game/skillPreview'
 
 const FONT =
   '"Bahnschrift", "DIN Alternate", "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif'
@@ -39,6 +40,7 @@ export class Hud extends Phaser.Scene {
   private menuTexts: Phaser.GameObjects.Text[] = []
   private menuUsed = 0
   private preview!: Phaser.GameObjects.Image
+  private skillPreview!: SkillPreview
   private barT!: Phaser.GameObjects.Rectangle
   private barB!: Phaser.GameObjects.Rectangle
 
@@ -97,6 +99,7 @@ export class Hud extends Phaser.Scene {
       .setLineSpacing(16)
     this.mg = this.add.graphics().setDepth(60)
     this.preview = this.add.image(0, 0, 'bd_mid').setOrigin(0, 0).setDepth(61).setVisible(false)
+    this.skillPreview = new SkillPreview(this)
     this.menuTexts = []
   }
 
@@ -288,6 +291,9 @@ export class Hud extends Phaser.Scene {
       .setPosition(x, y)
       .setOrigin(ox, 0.5)
       .setFontSize(size)
+      .setFontFamily(FONT)
+      .setFontStyle('')
+      .setLetterSpacing(0)
       .setColor(color)
       .setAlpha(alpha)
       .setWordWrapWidth(wrap || null, true)
@@ -317,6 +323,7 @@ export class Hud extends Phaser.Scene {
     for (let i = 0; i < this.menuTexts.length; i++) this.menuTexts[i].setVisible(false)
     this.menuUsed = 0
     this.preview.setVisible(false)
+    if (m?.tab !== 'skills') this.skillPreview.hide()
     if (!m) return
     const pad = b.ctl.padConnected ? 1 : 0,
       key = (action: string) => KEY_LABEL[action]?.[pad] ?? action,
@@ -361,7 +368,7 @@ export class Hud extends Phaser.Scene {
     const hint =
       m.tab === 'stage'
         ? `W / S  选择        ${pad ? 'A' : 'Enter / 空格'}  确认        ${key('skills')}  技能        Esc  返回战斗`
-        : `W / S  切换技能        Esc / ${key('skills')}  返回`
+        : `W / S  切换技能        ${pad ? 'A' : 'Enter / 空格'}  ${m.previewPaused ? '继续' : '暂停'}演示        Esc / ${key('skills')}  返回`
     this.label(cx, Y + H - 40, hint, 22, '#8fb3c9', k, 0.5).setLetterSpacing(2)
     const LX = X + 56,
       LW = 620,
@@ -467,23 +474,25 @@ export class Hud extends Phaser.Scene {
       ).setLetterSpacing(4)
       this.label(LX + LW - 24, y + 27, skill.keys.map(key).join(' + '), 22, on ? '#bfe9ff' : '#6f90a8', k, 1)
     })
-    // the right side: the skill under the cursor, large — its name, how it is pressed, what it does
+    // The recording leads; the controls and explanation stay directly beneath it.
     const skill = SKILLS[m.skill],
-      PH = 640
-    g.fillStyle(0x08202f, 0.55 * k).fillRoundedRect(RX, top, RW, PH, 12)
-    g.lineStyle(2, COL.cyan, 0.5 * k).strokeRoundedRect(RX, top, RW, PH, 12)
-    this.label(RX + 48, top + 26, String(m.skill + 1).padStart(2, '0'), 30, '#6f90a8', k)
-      .setFontFamily(DISPLAY_FONT)
-      .setOrigin(0, 0)
-    this.label(RX + 48, top + 118, skill.name, 64, '#ffffff', k * slide).setLetterSpacing(10)
-    g.fillStyle(COL.cyan, 0.8 * k).fillRect(RX + 48, top + 172, 120 + 60 * slide, 3)
-    let x = RX + 48
-    const ky = top + 238
-    if (skill.how) x += this.label(x, ky, skill.how, 28, '#8fd6ff', k).width + 18
+      PH = (RW * 9) / 16
+    g.fillStyle(0x030b13, k).fillRect(RX, top, RW, PH)
+    this.skillPreview.show(skill, RX, top, RW, k * slide, m.previewPaused)
+    g.lineStyle(2, COL.cyan, 0.7 * k).strokeRect(RX - 1, top - 1, RW + 2, PH + 2)
+    g.fillStyle(COL.cyan, k).fillRect(RX, top + PH + 4, RW * this.skillPreview.progress, 3)
+    if (this.skillPreview.failed) this.label(RX + RW / 2, top + PH / 2, '演示暂不可用', 26, '#c8e2f2', k, 0.5)
+    this.label(RX, top + PH + 42, skill.name, 42, '#ffffff', k * slide).setLetterSpacing(5)
+    if (m.previewPaused) this.label(RX + RW, top + PH + 42, '已暂停', 22, '#8fd6ff', k, 1)
+    let x = RX
+    const ky = top + PH + 96
+    if (skill.how) x += this.label(x, ky, skill.how, 25, '#8fd6ff', k).width + 18
     skill.keys.forEach((action, i) => {
       if (i) x += this.label(x + 8, ky, '+', 28, '#8fd6ff', k).width + 18
       x += this.cap(x, ky, key(action), k, COL.cyan) + 8
     })
-    this.label(RX + 48, ky + 62, skill.text, 30, '#c8e2f2', k * slide, 0, RW - 96).setOrigin(0, 0)
+    this.label(RX, ky + 42, skill.text, 25, '#c8e2f2', k * slide, 0, RW)
+      .setOrigin(0, 0)
+      .setLineSpacing(7)
   }
 }
