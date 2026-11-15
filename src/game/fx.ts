@@ -62,6 +62,8 @@ interface Rip {
   life: number
   r1: number
   amp: number
+  /** whether its front carries enemy bullets away; a ripple that is only there to be seen does not */
+  sweeps: boolean
 }
 
 const RIP_W = 480,
@@ -79,7 +81,9 @@ export class Fx {
   private overlay: Phaser.GameObjects.Rectangle
   private overlayLife = 0
   private overlayMax = 1
+  private overlayRise = 0
   private overlayA = 0
+  private bloomCore: P | null = null
 
   constructor(private scene: Phaser.Scene) {
     this.overlay = scene.add
@@ -89,6 +93,12 @@ export class Fx {
       .setAlpha(0)
       .setBlendMode(ADD)
     this.buildRipple()
+  }
+
+  /** 0..1: how overexposed the frame is by the execution bloom right now. */
+  get glare() {
+    const core = this.bloomCore
+    return core && core.life < core.max ? core.im.alpha : 0
   }
 
   /** Whether all finite particles, text and waves have cleared. */
@@ -204,7 +214,9 @@ export class Fx {
     }
     if (this.overlayLife > 0) {
       this.overlayLife -= dt
-      this.overlay.setAlpha(Math.max(0, this.overlayA * (this.overlayLife / this.overlayMax)))
+      const decay = Math.max(0, Math.min(1, this.overlayLife / this.overlayMax)),
+        rise = this.overlayRise > 0 ? Math.min(1, 1 - (this.overlayLife - this.overlayMax) / this.overlayRise) : 1
+      this.overlay.setAlpha(this.overlayA * rise * rise * (3 - 2 * rise) * decay)
     }
     this.updateRipple(dt)
   }
@@ -314,36 +326,77 @@ export class Fx {
       this.slash(x, y, key, rot, scale, dir, color, { ...options, intense: true, core: i === 0 })
   }
 
-  /** One unbroken ribbon follows the actual traversed segment, then fades after the last extension. */
+  /**
+   * The path of a dodge: a soft band of light with streaks torn along it, following the segment actually travelled
+   * and gone almost as soon as she has arrived. No two dodges draw the same set: each streak has its own place
+   * across the path, its own thickness, length, starting point, slight slant and lifetime.
+   */
   dashTrail(x0: number, y0: number, x1: number, y1: number) {
-    const layers = [
-      { width: 84, color: 0x168bff, alpha: 0.65 },
-      { width: 25, color: 0x35cfff, alpha: 0.9 },
-      { width: 5, color: 0xaff5ff, alpha: 0.9 },
-    ].map((layer) => {
-      const p = this.spawn('dash_trail', x0, y0, DEPTH.tail)
-      p.max = 0.36
-      p.sy0 = layer.width / 128
-      p.sy1 = p.sy0 * 0.25
-      p.a0 = layer.alpha
-      p.im.setTint(layer.color)
-      return p
+    const palette = [0xeafaff, 0x4fd6ff, 0x2f9bff, 0x4fd6ff, 0xbff6ff, 0x2f9bff, 0x168bff],
+      streaks = 6 + Math.floor(rand() * 4),
+      // the band first, then the one bright streak down the middle, then the ragged rest
+      specs = [{ offset: 0, width: 0, reach: 0, short: 0, tilt: 0, color: 0x168bff, alpha: 0.2, life: 0.2 }]
+    for (let i = 0; i < streaks; i++) {
+      const centre = i === 0
+      specs.push({
+        offset: centre ? randRange(-8, 8) : randRange(-125, 125) * (0.3 + 0.7 * rand()),
+        width: centre ? 6 : randRange(1.6, 4.8),
+        // how far back past the start it reaches, and how far short of her it stops
+        reach: randRange(0, 0.8),
+        short: centre ? 0 : randRange(0, 0.42),
+        tilt: centre ? 0 : randRange(-0.045, 0.045),
+        color: palette[i % palette.length],
+        alpha: centre ? 1 : randRange(0.5, 0.95),
+        life: randRange(0.13, 0.26),
+      })
+    }
+    const lines = specs.map((spec) => {
+      const p = this.spawn(spec.width ? 'dash_line' : 'dash_trail', x0, y0, DEPTH.tail)
+      p.max = spec.life
+      p.sy0 = spec.width ? spec.width / 4.5 : 70 / 128
+      p.sy1 = p.sy0 * 0.3
+      p.a0 = spec.alpha
+      p.im.setTint(spec.color)
+      return { p, ...spec }
     })
     function extend(x: number, y: number) {
       const distance = Math.hypot(x - x0, y - y0),
-        angle = Math.atan2(y - y0, x - x0)
-      for (const p of layers) {
+        angle = Math.atan2(y - y0, x - x0),
+        ux = Math.cos(angle),
+        uy = Math.sin(angle)
+      for (const { p, offset, reach, short, tilt } of lines) {
+        const length = Math.max(8, distance * (1 + reach - short)),
+          back = distance * short + length / 2,
+          cx = x - ux * back - uy * offset,
+          cy = y - uy * back + ux * offset
         p.life = 0
-        p.sx0 = p.sx1 = distance / 512
+        p.sx0 = p.sx1 = length / 512
         p.im
-          .setPosition((x0 + x) / 2, (y0 + y) / 2)
-          .setRotation(angle)
+          .setPosition(cx, cy)
+          .setRotation(angle + tilt)
           .setScale(p.sx0, p.sy0)
           .setAlpha(p.a0)
       }
     }
     extend(x1, y1)
     return { extend }
+  }
+
+  /** A body dropping out like a lost signal: thin slices of it jump sideways and blink out. */
+  glitch(x: number, y: number, w: number, h: number) {
+    for (let i = 0; i < 12; i++) {
+      const p = this.spawn('px', x + randRange(-0.7, 0.7) * w, y - rand() * h)
+      p.max = randRange(0.06, 0.2)
+      p.delay = rand() * 0.07
+      p.vx = randRange(-900, 900)
+      p.drag = 9
+      p.sx0 = randRange(0.3, 1.1) * (w / 4)
+      p.sx1 = p.sx0 * 1.6
+      p.sy0 = randRange(0.5, 2.2)
+      p.sy1 = 0.3
+      p.im.setTint(i % 3 === 0 ? COL.pink : i % 3 === 1 ? COL.cyan : 0xffffff)
+      if (p.delay > 0) p.im.setVisible(false)
+    }
   }
 
   overloadEnter(x: number, y: number) {
@@ -587,11 +640,20 @@ export class Fx {
     bloom.sx0 = bloom.sy0 = 0.02
     bloom.sx1 = bloom.sy1 = 0.35 * power
     bloom.im.setScale(0.02).setAlpha(0).setTint(COL.cyan)
-    // Random angles and speeds leave uneven gaps: each bright fragment draws its own needle-thin trail.
-    for (let i = 0; i < Math.round(96 * power); i++) {
+    this.needles(x, y, power, Math.round(96 * power), [COL.pink, COL.cyan, 0xffffff, COL.cyan, COL.cyan])
+    return {
+      get reached() {
+        return bloom.life >= bloom.peakAt
+      },
+    }
+  }
+
+  /** Random angles and speeds leave uneven gaps: each bright fragment draws its own needle-thin trail. */
+  private needles(x: number, y: number, power: number, count: number, palette: number[]) {
+    for (let i = 0; i < count; i++) {
       const a = rand() * Math.PI * 2,
         speed = randRange(280, 2000) * power,
-        color = i % 5 === 0 ? COL.pink : i % 3 ? COL.cyan : 0xffffff,
+        color = palette[i % palette.length],
         p = this.spawn('streak', x + randRange(-3, 3), y + randRange(-3, 3))
       p.vx = Math.cos(a) * speed
       p.vy = Math.sin(a) * speed
@@ -618,10 +680,106 @@ export class Fx {
         head.im.setTint(color).setScale(0.01).setAlpha(0)
       }
     }
+  }
+
+  /**
+   * The execution bloom. Overexposed blades of light open from the struck core until they reach past the
+   * edges of the frame, under a veil that washes out the whole screen; then they thin, shorten and close.
+   * Everything shares one envelope, so the returned peak is the moment the bloom is at its largest and brightest.
+   * `hot` is the overload version: the same shape, but every ray wears a wide, saturated blue or pink edge.
+   */
+  /**
+   * The execution's bloom. `flash` scales the wash it throws over the whole screen (0 for none), for the lesser
+   * blooms that mark a heavy hit rather than a kill.
+   */
+  bloomBurst(x: number, y: number, power = 1, hot = false, flash = 1): FxPeak {
+    const peak = IMPACT_PEAK_TIME,
+      BLUE = 0x2f6bff,
+      PINK = 0xff38b0
+    const glow = (scale: number, color: number, alpha: number, life: number, dx = 0) => {
+      const p = this.spawn('glow', x + dx, y)
+      p.peakAt = peak
+      p.max = life
+      p.sx0 = p.sy0 = scale * 0.1
+      p.sx1 = p.sy1 = scale * power
+      p.a0 = alpha
+      p.im.setTint(color).setScale(p.sx0).setAlpha(0)
+      return p
+    }
+    // The core burns out to white: stacked glows saturate a compact disc inside a faint coloured falloff.
+    if (hot) {
+      glow(4.6, BLUE, 0.6, 0.42, -70 * power)
+      glow(4.6, PINK, 0.6, 0.42, 70 * power)
+    } else glow(4.8, BLUE, 0.42, 0.4)
+    glow(2.2, 0xffffff, 1, 0.38)
+    glow(2.2, 0xffffff, 1, 0.34)
+    const core = glow(1.2, 0xffffff, 1, 0.34)
+    this.bloomCore = core
+    const petal = (angle: number, length: number, width: number, color: number, alpha: number, life: number) => {
+      const p = this.spawn('petal', x, y)
+      p.peakAt = peak
+      p.max = life
+      p.sx0 = (length / 512) * 0.14
+      p.sx1 = length / 512
+      p.sy0 = (width / 96) * 0.5
+      p.sy1 = width / 96
+      p.a0 = alpha
+      p.rotV = randRange(-0.3, 0.3)
+      p.im.setTint(color).setRotation(angle).setScale(p.sx0, p.sy0).setAlpha(0)
+    }
+    // Main blades are spread around the circle but never evenly: each has its own length, width and timing.
+    const spin = rand() * Math.PI * 2,
+      blades = 13
+    for (let i = 0; i < blades; i++) {
+      const angle = spin + ((i + randRange(-0.36, 0.36)) / blades) * Math.PI * 2,
+        length = randRange(300, 660) * power,
+        width = randRange(22, 64) * power,
+        life = randRange(0.3, 0.44)
+      if (hot) {
+        petal(angle, length, width * 2.5, i % 2 ? PINK : BLUE, 0.85, life)
+        petal(angle, length * 0.94, width * 0.8, 0xffffff, 1, life)
+      } else {
+        petal(angle, length, width * 1.7, i % 4 === 3 ? 0xff4fc8 : 0x3a6dff, 0.5, life)
+        petal(angle, length * 0.96, width, 0xffffff, 1, life)
+      }
+    }
+    // thinner rays fill the gaps between them
+    for (let i = 0; i < 20; i++) {
+      petal(
+        rand() * Math.PI * 2,
+        randRange(160, 430) * power,
+        randRange(6, 16) * power,
+        hot ? [0xff8fe0, 0x7fb4ff, 0xffffff][i % 3] : rand() < 0.45 ? 0xffffff : 0x9fd0ff,
+        randRange(0.55, 0.9),
+        randRange(0.26, 0.4)
+      )
+    }
+    this.needles(
+      x,
+      y,
+      power,
+      Math.round(64 * power),
+      hot ? [COL.pinkDeep, COL.main, 0xffffff, COL.pink] : [COL.pink, COL.cyan, 0xffffff, COL.cyan, COL.cyan]
+    )
+    if (flash > 0) this.screenFlash(hot ? 0xe0c4ff : 0xcfe2ff, (hot ? 0.17 : 0.14) * flash, 0.26, peak)
     return {
       get reached() {
-        return bloom.life >= bloom.peakAt
+        return core.life >= core.peakAt
       },
+    }
+  }
+
+  /** A short electrical discharge crawling over a failing frame. */
+  arc(x: number, y: number, size = 1, color: number = COL.pink) {
+    for (let k = 0; k < 2; k++) {
+      const p = this.spawn('arc', x + randRange(-12, 12) * size, y + randRange(-12, 12) * size)
+      p.max = randRange(0.05, 0.1)
+      p.delay = k * 0.045
+      p.sx0 = p.sx1 = size * randRange(0.55, 1.1) * (rand() < 0.5 ? -1 : 1)
+      p.sy0 = p.sy1 = size * randRange(0.6, 1.2) * (rand() < 0.5 ? -1 : 1)
+      p.im.rotation = randRange(-1.5, 1.5)
+      p.im.setTint(k ? 0xffffff : color)
+      if (p.delay > 0) p.im.setVisible(false)
     }
   }
 
@@ -704,11 +862,14 @@ export class Fx {
     this.texts.push({ t, life: 0, max: 0.7, vy: -260 })
   }
 
-  screenFlash(color: number, alpha = 0.6, life = 0.12) {
+  /** A full-screen veil of light. With `rise` it opens to full strength first, then decays over `life`. */
+  screenFlash(color: number, alpha = 0.6, life = 0.12, rise = 0) {
     this.overlay.setFillStyle(color)
     this.overlayA = alpha
-    this.overlayLife = this.overlayMax = life
-    this.overlay.setAlpha(alpha)
+    this.overlayMax = life
+    this.overlayRise = rise
+    this.overlayLife = life + rise
+    this.overlay.setAlpha(rise > 0 ? 0 : alpha)
   }
 
   /* ----------------------------- ripple ----------------------------- */
@@ -770,14 +931,15 @@ export class Fx {
   }
 
   /** Screen-space water ripple expanding from a world point. */
-  ripple(x: number, y: number, r1 = 1500, life = 1.1, amp = 1, delay = 0) {
-    // Chained visible waves replace the fading ring; an invisible sweep does not erase it.
-    if (amp > 0) this.rips = this.rips.filter((r) => r.amp === 0)
-    this.rips.push({ x, y, t: -delay, life, r1, amp })
+  ripple(x: number, y: number, r1 = 1500, life = 1.1, amp = 1, delay = 0, sweeps = true) {
+    // A new visible wave takes over the picture from the fading one, which carries on unseen: whatever it was
+    // still sweeping away, it goes on sweeping.
+    if (amp > 0) for (const r of this.rips) r.amp = 0
+    this.rips.push({ x, y, t: -delay, life, r1, amp, sweeps })
   }
   /** World-space radius each live ripple has reached (used to sweep away projectiles). */
   ripFronts(): { x: number; y: number; r: number }[] {
-    return this.rips.filter((r) => r.t > 0).map((r) => ({ x: r.x, y: r.y, r: Fx.ripRadius(r) * 0.8 }))
+    return this.rips.filter((r) => r.t > 0 && r.sweeps).map((r) => ({ x: r.x, y: r.y, r: Fx.ripRadius(r) * 0.8 }))
   }
   // Immediate, steady travel makes the front readable during the close-up cuts.
   private static ripRadius(r: Rip) {

@@ -1,0 +1,53 @@
+{
+  "collectedOn": "2026-11-14",
+  "note": "Originals are kept untouched under sfx/ and music/. `pnpm audio:pack` (tools/pack-audio.mjs, needs ffmpeg) cuts the dead air before each effect, trims it to `longest` seconds, levels it to `peak` dBFS, fades the tail and writes mono mp3 files to public/audio/sfx/; each piece of music is lowered by its `gain` dB and written to public/audio/<name>.mp3. The mix between effects is set in src/audio/sfx.ts.",
+  "packs": {
+    "ui": {
+      "title": "Interface Sounds",
+      "author": "Kenney",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "authorUpload": "https://opengameart.org/content/interface-sounds",
+      "download": "https://opengameart.org/sites/default/files/kenney_interfaceSounds.zip",
+      "license": "CC0-1.0",
+      "licenseFile": "licenses/Kenney-Interface-Sounds.txt"
+    }
+  },
+  "effects": {
+    "clear": {
+      "pack": "ui",
+      "original": "Audio/confirmation_002.ogg",
+      "local": "sfx/clear.ogg",
+      "longest": 0.8,
+      "peak": -7,
+      "use": "an area cleared"
+    }
+  },
+  "music": [
+    {
+      "name": "bgm1",
+      "title": "Cyborg Ninja",
+      "author": "Kevin MacLeod",
+      "source": "https://incompetech.com/music/royalty-free/music.html",
+      "download": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Cyborg%20Ninja.mp3",
+      "license": "CC-BY-4.0",
+      "attribution": "\"Cyborg Ninja\" Kevin MacLeod (incompetech.com) Licensed under Creative Commons: By Attribution 4.0 License http://creativecommons.org/licenses/by/4.0/",
+      "local": "music/cyborg_ninja.mp3",
+      "gain": -9,
+      "bitrate": "112k",
+      "use": "stage 1"
+    },
+    {
+      "name": "bgm2",
+      "title": "EDM Detection Mode",
+      "author": "Kevin MacLeod",
+      "source": "https://incompetech.com/music/royalty-free/music.html",
+      "download": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/EDM%20Detection%20Mode.mp3",
+      "license": "CC-BY-4.0",
+      "attribution": "\"EDM Detection Mode\" Kevin MacLeod (incompetech.com) Licensed under Creative Commons: By Attribution 4.0 License http://creativecommons.org/licenses/by/4.0/",
+      "local": "music/edm_detection_mode.mp3",
+      "gain": -7,
+      "bitrate": "96k",
+      "use": "stage 2"
+    }
+  ]
+}

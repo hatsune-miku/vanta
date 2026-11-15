@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4173 --strictPort",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm test:flow && pnpm test:combat && pnpm test:enemy && pnpm test:overload && pnpm test:advanced && pnpm test:revision && pnpm test:rig && pnpm test:bot && pnpm test:exec",
+    "test": "pnpm test:flow && pnpm test:combat && pnpm test:enemy && pnpm test:overload && pnpm test:advanced && pnpm test:revision && pnpm test:rig && pnpm test:tutorial && pnpm test:bot && pnpm test:bot2 && pnpm test:exec",
     "test:flow": "node tools/play.mjs test tools/flow-check.mjs",
     "test:combat": "node tools/play.mjs test tools/combat-check.mjs",
     "test:enemy": "node tools/play.mjs test tools/enemy-check.mjs",
@@ -16,15 +16,19 @@
     "test:revision": "node tools/play.mjs test tools/revision-check.mjs",
     "test:overload": "node tools/play.mjs test tools/overload-check.mjs",
     "test:rig": "node tools/play.mjs test tools/rig-check.mjs",
+    "test:tutorial": "node tools/play.mjs 'test&tutorial' tools/tutorial-check.mjs",
     "test:bot": "node tools/play.mjs test tools/bot.mjs",
+    "test:bot2": "node tools/play.mjs 'test&level=2' tools/bot.mjs",
     "test:exec": "node tools/play.mjs test tools/exec-capture.mjs",
     "test:live": "pnpm build && node tools/live.mjs",
     "art:preview": "node tools/preview3d.mjs",
     "models:pack": "node tools/pack-models.mjs && node tools/pack-elle.mjs",
+    "audio:pack": "node tools/pack-audio.mjs",
     "deploy:check": "pnpm build && rsync -azn --delete --itemize-changes --exclude=.DS_Store -e 'ssh -o BatchMode=yes -o ConnectTimeout=10' dist/ miku@vanillacake.cn:/var/www/vanta/",
     "deploy": "pnpm build && rsync -az --delete --exclude=.DS_Store -e 'ssh -o BatchMode=yes -o ConnectTimeout=10' dist/ miku@vanillacake.cn:/var/www/vanta/"
   },
   "dependencies": {
+    "@kookapp/kook-minigame-sdk": "1.3.1",
     "phaser": "4.2.1",
     "three": "^0.187.0"
   },

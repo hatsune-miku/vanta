@@ -5,6 +5,7 @@ import { KeyHint } from './keyHint'
 
 import { A, Anim } from '../art/anims'
 import { Tail } from '../art/tail'
+import type { SfxName } from '../audio/sfx'
 import { COL, DEPTH, GROUND_Y } from '../config'
 import { approach, clamp, rand, randRange } from '../core/util'
 
@@ -29,12 +30,23 @@ interface Atk {
   fx?: { at: number; key: string; rot: number; scale: number; flipY?: boolean; sy?: number }
   ghost?: boolean
   shock?: number
-  sfx?: string
+  sfx?: SfxName
   /** power attack: long, clearly readable wind-up with a gathering glow and a marked danger zone */
   charge?: boolean
 }
 
 const ATK: Record<string, Atk> = {
+  // stage 2's skirmisher: one long, clearly telegraphed lunge from well outside sword reach
+  lancerLunge: {
+    charge: true,
+    wind: A.windThrust,
+    windLen: 34,
+    strike: A.strikeThrust,
+    len: 36,
+    step: [1, 13, 1500],
+    hits: [{ from: 2, to: 14, box: [9, -154, 250, 88], hit: H(13, 480, -120) }],
+    fx: { at: 2, key: 'cut', rot: 0, scale: 1.05 },
+  },
   gruntOver: {
     wind: A.windOver,
     windLen: 24,
@@ -130,10 +142,21 @@ export abstract class Enemy extends Actor {
   private anchorMarker: Phaser.GameObjects.Image | null = null
   private execKey: KeyHint | null = null
   private anchorKey: KeyHint | null = null
+  /** Large frames sink to one knee while dying; regular frames reel, then sway on their feet. */
+  protected kneels = false
+  /** 0 standing .. 1 down on one knee; lowers everything that is placed relative to the body */
+  private crouch = 0
+  /** The exposed core: a small hot point with an anamorphic streak, worn on the body while dying. */
+  private breakLight: Phaser.GameObjects.Image[] = []
+  private pulse = 0
   private bar: Phaser.GameObjects.Rectangle[] = []
   protected side = rand() < 0.5 ? -1 : 1
   protected jitter = randRange(-40, 60)
   kind = 'grunt'
+  /** How much more damage a dying body soaks up before it falls without an execution. */
+  private guard = 0
+  /** A training target: it stands its ground, watches the player and never attacks. */
+  passive = false
   /** attack boxes and slash effects are authored for a regular frame; bigger frames reusing them scale up */
   atkScale = 1
 
@@ -163,6 +186,17 @@ export abstract class Enemy extends Actor {
   get dying() {
     return this.state === 'dying' && !this.dead
   }
+  /** Where the body's core is drawn; it drops and leans forward as a large frame kneels. */
+  get coreX() {
+    return this.x + this.facing * this.h * 0.07 * this.crouch
+  }
+  get coreY() {
+    return this.cy + this.h * 0.17 * this.crouch
+  }
+  /** Height of the head above the feet, for markers and bars. */
+  private get top() {
+    return this.h * (1 - 0.36 * this.crouch)
+  }
   face() {
     if (Math.abs(this.dx) > 12) this.facing = this.dx > 0 ? 1 : -1
   }
@@ -172,6 +206,8 @@ export abstract class Enemy extends Actor {
     if (this.invuln > 0) this.invuln--
     if (this.flashT > 0) this.flashT--
     this.st++
+    this.crouch = approach(this.crouch, this.dying && this.kneels && this.onGround ? 1 : 0, 0.045)
+    this.rig.rest = this.crouch
     switch (this.state) {
       case 'spawn':
         this.rig.setAlpha(Math.min(1, this.st / 24))
@@ -206,14 +242,23 @@ export abstract class Enemy extends Actor {
         break
       case 'dying':
         this.vx = approach(this.vx, 0, 26)
-        this.an.play(this.onGround || this.flying ? A.stun : A.launched, 6)
-        if (this.flying) {
-          this.vy = approach(this.vy, 0, 20)
-        }
+        this.an.play(
+          !(this.onGround || this.flying) ? A.launched : this.kneels ? A.kneel : this.st < 32 ? A.reel : A.stun,
+          6
+        )
+        if (this.flying) this.vy = approach(this.vy, 0, 20)
+        // The frame keeps shorting out: arcs crawl over the body between showers of sparks.
+        if (this.st % 11 === 0)
+          this.world.fx.arc(
+            this.coreX + randRange(-0.3, 0.3) * this.w,
+            this.coreY + randRange(-0.28, 0.26) * this.h * (1 - 0.4 * this.crouch),
+            0.22 + this.h / 1100,
+            rand() < 0.3 ? COL.cyan : COL.pink
+          )
         if (this.st % 14 === 0)
           this.world.fx.spark(
-            this.cx + randRange(-30, 30),
-            this.cy + randRange(-60, 40),
+            this.coreX + randRange(-30, 30),
+            this.coreY + randRange(-60, 40),
             rand() * 6.28,
             2,
             COL.main,
@@ -240,7 +285,12 @@ export abstract class Enemy extends Actor {
         break
       default:
         if (this.cd > 0) this.cd--
-        this.ai()
+        if (this.passive) {
+          this.vx = approach(this.vx, 0, 30)
+          if (this.flying) this.vy = approach(this.vy, 0, 30)
+          this.face()
+          this.an.play(A.eIdle, 6)
+        } else this.ai()
     }
     if (this.gone) return
     this.physics()
@@ -424,7 +474,14 @@ export abstract class Enemy extends Actor {
     if (this.dead || this.state === 'spawn' || this.state === 'reviving' || this.invuln > 0) return false
     const damage = hit.dmg * (src === this.world.player ? (hit.multiplier ?? this.world.player.damageMultiplier) : 1)
     if (damage <= 0) return false
-    const directKill = this.dying || (this.lives === 1 && damage >= this.maxHp * 2)
+    if (this.dying) {
+      // Hard to finish by accident: stray hits wear the guard down, and only a dodge slash ends it at once.
+      this.flashT = 4
+      this.guard -= damage
+      if (hit.finish || this.guard <= 0) this.die(false, dir)
+      return true
+    }
+    const directKill = this.lives === 1 && damage >= this.maxHp * 2
     this.hp = Math.max(0, this.hp - damage)
     this.flashT = 4
     if (directKill) {
@@ -432,7 +489,9 @@ export abstract class Enemy extends Actor {
       return true
     }
     if (this.hp === 0) {
-      this.enterDying()
+      // A finishing hit defeats on the spot (a body with lives left is floored and loses one); others leave it dying.
+      if (hit.finish) this.die(false, dir)
+      else this.enterDying()
       return true
     }
     if (this.armored) {
@@ -441,7 +500,18 @@ export abstract class Enemy extends Actor {
     }
     this.interrupt()
     this.facing = -dir as 1 | -1
-    this.stun = hit.stun
+    this.stun = hit.stagger ?? hit.stun
+    if (hit.stagger) {
+      // held reeling where it stands: not thrown, and hardly moved
+      this.vx = dir * Math.min(hit.kx, 150)
+      if (this.flying) this.vy = 0
+      if (this.flying || this.onGround) this.set('hurt')
+      else {
+        this.vy = Math.max(this.vy, -160)
+        this.set('launched')
+      }
+      return true
+    }
     if (this.flying) {
       this.vx = dir * hit.kx * 0.8
       this.vy = clamp(hit.ky * 0.35, -420, 420)
@@ -482,12 +552,15 @@ export abstract class Enemy extends Actor {
     const fx = this.world.fx
     this.interrupt()
     this.set('dying')
+    this.guard = Math.max(80, this.maxHp)
     this.vx *= 0.2
     fx.ring(this.cx, this.cy, COL.main, 30, 260, 0.4)
+    fx.ring(this.cx, this.cy, COL.pinkDeep, 20, 150 + this.h * 0.5, 0.3)
     fx.shards(this.cx, this.cy, 10, COL.main, 0.7)
-    fx.glint(this.cx, this.cy, COL.main, 0.6, 0.3)
+    fx.glint(this.cx, this.cy, COL.pinkDeep, 0.9, 0.3)
+    for (let i = 0; i < 3; i++)
+      fx.arc(this.cx + randRange(-0.3, 0.3) * this.w, this.cy + randRange(-0.3, 0.3) * this.h, 0.3 + this.h / 850)
     this.world.sfx.play('break')
-    this.world.hitstop(8)
   }
 
   /** Result of an execution. */
@@ -536,8 +609,10 @@ export abstract class Enemy extends Actor {
   }
 
   render(alpha: number, time: number) {
+    this.pulse = time
     super.render(alpha, time)
     const show = this.dying && !this.p.cine
+    this.renderBreakLight(show, time)
     const anchored =
       this.p.overloaded &&
       !this.p.cine &&
@@ -546,7 +621,7 @@ export abstract class Enemy extends Actor {
       this.state !== 'spawn' &&
       this.state !== 'reviving'
     const paired = show && anchored
-    const markerY = this.ry - this.h - 100
+    const markerY = this.ry - this.top - 100
     if (show) {
       this.marker ??= this.world.stage.add
         .image(0, 0, 'marker')
@@ -594,7 +669,7 @@ export abstract class Enemy extends Actor {
       }
       if (this.bar.length) {
         const x = this.rx,
-          y = this.ry - this.h - 22
+          y = this.ry - this.top - 22
         this.bar[0].setPosition(x, y + 1).setVisible(vis)
         this.bar[1]
           .setPosition(x - 40, y)
@@ -603,12 +678,58 @@ export abstract class Enemy extends Actor {
       }
     }
   }
+  /** The body itself glows and throbs in the execution colour while it can be finished. */
+  protected dyingTint() {
+    this.rig.setTintMul(COL.pinkDeep, 0.035 + 0.075 * (0.5 + 0.5 * Math.sin(this.pulse * 8.5)))
+  }
   protected applyTint() {
-    if (this.dying) this.rig.setTintMul(0xffd0f0)
+    if (this.dying) this.dyingTint()
     else this.rig.setFlash(null)
   }
 
+  /** The mark worn on the body: a flickering hot point at the core, crossed by a thin lens streak. */
+  private renderBreakLight(show: boolean, time: number) {
+    if (!show) {
+      for (const im of this.breakLight) im.setVisible(false)
+      return
+    }
+    if (!this.breakLight.length) {
+      const add = this.world.stage.add
+      this.breakLight = [
+        add.image(0, 0, 'glow').setTint(COL.pinkDeep),
+        add.image(0, 0, 'cut').setTint(COL.pink),
+        add.image(0, 0, 'glow'),
+      ]
+      this.breakLight.forEach((im, i) =>
+        im.setDepth(DEPTH.frontFx + 0.5 + i * 0.01).setBlendMode(Phaser.BlendModes.ADD)
+      )
+    }
+    const [halo, streak, hot] = this.breakLight,
+      size = 0.55 + this.h / 520,
+      throb = 0.5 + 0.5 * Math.sin(time * 8.5),
+      // an unstable supply: mostly steady, with brief dips
+      flicker = 0.82 + 0.18 * Math.sin(time * 47) * Math.sin(time * 13.7),
+      x = this.rx + (this.coreX - this.x),
+      y = this.ry + (this.coreY - this.y)
+    halo
+      .setVisible(true)
+      .setPosition(x, y)
+      .setScale(size * (0.62 + 0.2 * throb))
+      .setAlpha(0.75 * flicker)
+    streak
+      .setVisible(true)
+      .setPosition(x, y)
+      .setScale(size * (0.3 + 0.16 * throb), 0.55 * flicker)
+      .setAlpha(0.9 * flicker)
+    hot
+      .setVisible(true)
+      .setPosition(x, y)
+      .setScale(size * (0.16 + 0.05 * throb))
+      .setAlpha(flicker)
+  }
+
   destroy() {
+    for (const im of this.breakLight) im.destroy()
     super.destroy()
     this.marker?.destroy()
     this.anchorMarker?.destroy()
@@ -751,6 +872,7 @@ export class Heavy extends Enemy {
     this.maxHp = this.hp = 190
     this.speed = 140
     this.armored = true
+    this.kneels = true
     this.cd = randRange(40, 100)
   }
   protected ai() {
@@ -770,6 +892,7 @@ export class Titan extends Enemy {
     this.maxHp = this.hp = 430
     this.speed = 105
     this.armored = true
+    this.kneels = true
     this.atkScale = 1.5
     this.cd = randRange(50, 110)
   }
@@ -850,9 +973,15 @@ export class Drone extends Enemy {
   render(alpha: number, time: number) {
     this.rig.extraRot =
       clamp(this.vx / 3000, -0.3, 0.3) +
-      (this.state === 'swoop' ? Math.atan2(this.vy, Math.abs(this.vx)) * 0.6 * this.facing : 0)
+      (this.state === 'swoop' ? Math.atan2(this.vy, Math.abs(this.vx)) * 0.6 * this.facing : 0) +
+      // a dying drone cannot hold its attitude: it lists and shudders in place
+      (this.dying ? 0.2 * Math.sin(time * 7.3 + this.ph) + 0.08 * Math.sin(time * 23) : 0)
     super.render(alpha, time)
-    this.rig.setPos(this.rx, this.ry + Math.sin(time * 4 + this.ph) * 5 - 35, this.facing)
+    this.rig.setPos(
+      this.rx + (this.dying ? Math.sin(time * 31 + this.ph) * 2.5 : 0),
+      this.ry + Math.sin(time * 4 + this.ph) * 5 - 35,
+      this.facing
+    )
   }
 }
 
@@ -866,6 +995,8 @@ export class Warden extends Enemy {
     super(world, 'warden', 'warden', x, GROUND_Y)
     this.isBoss = true
     this.armored = true
+    this.kneels = true
+    this.title = '典狱者  WARDEN'
     this.maxHp = this.hp = 500
     this.maxLives = this.lives = 3
     this.speed = 200
@@ -1082,7 +1213,7 @@ export class Warden extends Enemy {
     this.cape.setAlpha(this.rig.alpha)
   }
   protected applyTint() {
-    if (this.dying) this.rig.setTintMul(0xffd0f0)
+    if (this.dying) this.dyingTint()
     else if (this.phase === 2) this.rig.setTintMul(0xffc8d0)
     else this.rig.setFlash(null)
   }
@@ -1092,8 +1223,191 @@ export class Warden extends Enemy {
   }
 }
 
+/* ---------------------------------- stage 2 ---------------------------------- */
+
+/** Strikes called down from above on marked ground: `count` of them around `x`, one after another. */
+function callStrikes(owner: Enemy, world: World, x: number, count: number, spread: number, dmg: number, wait: number) {
+  for (let i = 0; i < count; i++)
+    world.spawnProj({
+      kind: 'rain',
+      x: clamp(x + (i - (count - 1) / 2) * spread + randRange(-40, 40), world.bounds.l + 60, world.bounds.r - 60),
+      y: GROUND_Y,
+      vx: 0,
+      vy: 0,
+      team: 1,
+      dmg,
+      w: 120,
+      h: 900,
+      life: 8,
+      delay: wait + i * 10,
+      owner,
+    })
+}
+
+/**
+ * Skirmisher of the outer yard, in amber plate. It never stands and trades: it holds off at lunge range, commits
+ * to one long thrust, and breaks away again before it can be punished.
+ */
+export class Lancer extends Enemy {
+  private away = 0
+  private lunged = false
+  constructor(world: World, x: number, y = GROUND_Y) {
+    super(world, 'lancer', 'grunt', x, y)
+    this.maxHp = this.hp = 90
+    this.speed = 360
+    this.cd = randRange(40, 100)
+  }
+  protected applyTint() {
+    if (this.dying) this.dyingTint()
+    else this.rig.setTintMul(0xffb45a, 0.2)
+  }
+  protected ai() {
+    const adx = Math.abs(this.dx),
+      dir = Math.sign(this.dx) || 1
+    if (this.lunged) {
+      // the thrust is over: get clear
+      this.lunged = false
+      this.away = 46
+    }
+    if (this.away > 0) {
+      this.away--
+      this.face()
+      const wall = dir > 0 ? this.x - this.world.bounds.l : this.world.bounds.r - this.x
+      this.vx = approach(this.vx, wall > 140 ? -dir * this.speed : 0, 40)
+      this.an.play(A.eRun, 6)
+      return
+    }
+    this.approachPlayer(540, A.eRun, this.cd <= 0)
+    if (
+      this.cd <= 0 &&
+      adx > 260 &&
+      adx < 780 &&
+      Math.abs(this.p.y - this.y) < 220 &&
+      this.world.takeToken(this, false)
+    ) {
+      this.begin('lancerLunge')
+      this.lunged = true
+    }
+  }
+}
+
+/**
+ * Spotter, in teal. It keeps well back and calls strikes down on the hero's position: three in a row, each landing
+ * where its marker has been burning on the ground.
+ */
+export class Mortar extends Enemy {
+  private cast = 0
+  constructor(world: World, x: number, y = GROUND_Y) {
+    super(world, 'mortar', 'gunner', x, y)
+    this.maxHp = this.hp = 80
+    this.speed = 220
+    this.cd = randRange(80, 150)
+  }
+  protected applyTint() {
+    if (this.dying) this.dyingTint()
+    else this.rig.setTintMul(0x7dffd6, 0.2)
+  }
+  protected ai() {
+    const adx = Math.abs(this.dx),
+      dir = Math.sign(this.dx) || 1,
+      b = this.world.bounds
+    this.face()
+    if (this.cast > 0) {
+      // arm raised, calling it in
+      this.vx = approach(this.vx, 0, 30)
+      if (--this.cast === 0) this.world.releaseToken(this)
+      return
+    }
+    // hold a long way off; back away when crowded, unless the wall is behind
+    const room = dir > 0 ? this.x - b.l : b.r - this.x
+    if (adx < 620 && room > 160) {
+      this.vx = approach(this.vx, -dir * this.speed, 30)
+      this.an.play(A.eWalk, 6)
+    } else if (adx > 1000) {
+      this.vx = approach(this.vx, dir * this.speed, 30)
+      this.an.play(A.eRun, 6)
+    } else {
+      this.vx = approach(this.vx, 0, 30)
+      this.an.play(A.eIdle, 6)
+    }
+    if (this.cd <= 0 && adx < 1500 && this.world.takeToken(this, true)) {
+      this.cd = randRange(170, 230)
+      this.cast = 44
+      this.an.play(A.aim, 4, true)
+      this.world.sfx.play('warn')
+      this.world.fx.icon('warn', this.x, this.y - this.h - 46, 0.5, 0.7)
+      callStrikes(this, this.world, this.p.x + this.p.vx * 0.25, 3, 190, 9, 40)
+    }
+  }
+}
+
+/**
+ * Stage 2's boss: a siege frame half as tall again as a Titan. It fights like one, slowly and with the whole floor
+ * shaking, but it also commands the yard: it calls a line of strikes across the arena, and every time it is put
+ * down it brings skirmishers in. On its last life it stops waiting between swings.
+ */
+export class Arbiter extends Enemy {
+  private barrage = 240
+  private enraged = false
+  constructor(world: World, x: number) {
+    super(world, 'arbiter', 'titan', x, GROUND_Y)
+    this.isBoss = true
+    this.title = '裁决机  ARBITER'
+    this.armored = true
+    this.kneels = true
+    this.maxHp = this.hp = 520
+    this.maxLives = this.lives = 3
+    this.speed = 130
+    this.atkScale = 1.7
+    this.cd = 90
+  }
+  protected applyTint() {
+    if (this.dying) this.dyingTint()
+    else this.rig.setTintMul(this.enraged ? 0xff6a5a : 0xb89cff, this.enraged ? 0.3 : 0.18)
+  }
+  takeHit(hit: HitDef, src: Actor | null, dir: number) {
+    const lives = this.lives,
+      r = super.takeHit(hit, src, dir)
+    if (this.lives < lives) this.reinforce()
+    return r
+  }
+  executed(dir: number) {
+    const lives = this.lives
+    super.executed(dir)
+    if (this.lives < lives) this.reinforce()
+  }
+  /** A life lost: skirmishers come in from both ends, and on the last life it turns red. */
+  private reinforce() {
+    if (this.lives <= 0) return
+    const b = this.world.bounds
+    for (const x of [b.l + 220, b.r - 220]) this.world.reinforce('lancer', x)
+    this.enraged = this.lives === 1
+  }
+  protected ai() {
+    const adx = Math.abs(this.dx)
+    this.approachPlayer(330, A.eWalk, this.cd <= 0)
+    if (--this.barrage <= 0) {
+      // a line of strikes marching across the arena, the hero somewhere in the middle of it
+      this.barrage = this.enraged ? 250 : 380
+      this.world.sfx.play('warn')
+      this.world.fx.icon('warn', this.x, this.y - this.h - 60, 0.7, 0.9)
+      callStrikes(this, this.world, this.p.x, 6, 230, 12, 46)
+    }
+    if (this.cd <= 0 && adx < 640 && Math.abs(this.p.y - this.y) < 420 && this.world.takeToken(this, false)) {
+      this.begin(rand() < 0.55 ? 'heavySlam' : 'heavySweep')
+      if (this.enraged) this.cd = Math.min(this.cd, 40)
+    }
+  }
+}
+
 export function spawnEnemy(world: World, kind: string, x: number, y?: number): Enemy {
   switch (kind) {
+    case 'lancer':
+      return new Lancer(world, x, y)
+    case 'mortar':
+      return new Mortar(world, x, y)
+    case 'arbiter':
+      return new Arbiter(world, x)
     case 'gunner':
       return new Gunner(world, x, y)
     case 'heavy':

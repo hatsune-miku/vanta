@@ -3,7 +3,8 @@ import * as Phaser from 'phaser'
 import { shared } from './Battle'
 
 import { Backdrop } from '../art/stage'
-import { TEST_MODE } from '../config'
+import { DISPLAY_FONT, TEST_MODE, UI_FONT, VIEW_H, VIEW_W } from '../config'
+import { kook } from '../core/kook'
 
 export class Title extends Phaser.Scene {
   private bd!: Backdrop
@@ -17,39 +18,25 @@ export class Title extends Phaser.Scene {
       return
     }
     this.gone = false
+    // the game can be played from here on: tell KOOK, when it is the one hosting, that loading succeeded
+    kook.loadResult(true)
     shared.input.reset()
     this.bd = new Backdrop(this, 3000)
     this.cameras.main.setScroll(0, 0)
     this.cameras.main.filters.external.addVignette(0.5, 0.5, 0.9, 0.5)
-    const font = 'Impact, "Arial Black", sans-serif',
-      ui = '"Bahnschrift", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif'
-    const hud = (x: number, y: number, s: string, size: number, color: string, f = ui) =>
+    const text = (y: number, s: string, size: number, family: string) =>
       this.add
-        .text(x, y, s, { fontFamily: f, fontSize: `${size}px`, color })
+        .text(VIEW_W / 2, y, s, { fontFamily: family, fontSize: `${size}px`, color: '#ffffff' })
+        .setOrigin(0.5)
         .setScrollFactor(0)
         .setDepth(200)
-        .setShadow(0, 3, '#000', 10, false, true)
-    hud(1000, 270, 'VANTA', 190, '#ffffff', font).setLetterSpacing(12).setFontStyle('italic')
-    this.add.rectangle(1016, 520, 560, 3, 0x58c2ff).setOrigin(0, 0.5).setScrollFactor(0).setDepth(200)
-    hud(
-      1016,
-      640,
-      'A / D 移动    空格 跳跃    J 轻击    I 重击\nO 闪避    L 处决    U 过载    Esc 暂停',
-      24,
-      '#bfe9f2'
-    ).setLineSpacing(14)
-    const start = hud(1016, 790, '按任意键开始', 36, '#ffffff').setLetterSpacing(10)
-    this.tweens.add({ targets: start, alpha: 0.35, duration: 800, yoyo: true, repeat: -1 })
-    hud(1016, 1008, 'Elle · Kai Sama · CC BY 4.0   /   资源署名', 21, '#8fa9bb')
-      .setInteractive({ useHandCursor: true })
-      .on(
-        'pointerdown',
-        (_pointer: Phaser.Input.Pointer, _x: number, _y: number, event: Phaser.Types.Input.EventData) => {
-          event.stopPropagation()
-          shared.input.clear()
-          window.open(import.meta.env.BASE_URL + 'credits.html', '_blank', 'noopener,noreferrer')
-        }
-      )
+        .setShadow(0, 4, '#02060c', 18, false, true)
+    // the wordmark and one line: nothing else belongs on this screen
+    text(VIEW_H * 0.42, 'VANTA', 230, DISPLAY_FONT)
+      .setLetterSpacing(46)
+      .setFontStyle('900')
+    const start = text(VIEW_H * 0.68, '任意键继续', 34, UI_FONT).setLetterSpacing(14)
+    this.tweens.add({ targets: start, alpha: 0.3, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' })
     this.input.keyboard?.once('keydown', () => this.startGame())
     this.input.once('pointerdown', () => this.startGame())
   }

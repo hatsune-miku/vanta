@@ -1,10 +1,12 @@
 import * as Phaser from 'phaser'
 
-import type { Battle } from './Battle'
+import { type Battle, LEVELS } from './Battle'
 
-import { COL, VIEW_H, VIEW_W } from '../config'
-import { clamp, damp } from '../core/util'
-import { CHARGE_DURATION, OVERLOAD_COOLDOWN, OVERLOAD_DURATION, SHIELD_COST } from '../game/player'
+import { COL, DISPLAY_FONT, VIEW_H, VIEW_W } from '../config'
+import { KEY_LABEL } from '../core/input'
+import { clamp, damp, smooth } from '../core/util'
+import { type MenuExtra, SKILLS } from '../game/menu'
+import { OVERLOAD_DURATION, SHIELD_COST } from '../game/player'
 
 const FONT =
   '"Bahnschrift", "DIN Alternate", "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif'
@@ -32,6 +34,11 @@ export class Hud extends Phaser.Scene {
   private veil!: Phaser.GameObjects.Rectangle
   private big!: Phaser.GameObjects.Text
   private body!: Phaser.GameObjects.Text
+  /** the terminal: its drawing, its lettering (a pool reused every frame) and the stage picture */
+  private mg!: Phaser.GameObjects.Graphics
+  private menuTexts: Phaser.GameObjects.Text[] = []
+  private menuUsed = 0
+  private preview!: Phaser.GameObjects.Image
   private barT!: Phaser.GameObjects.Rectangle
   private barB!: Phaser.GameObjects.Rectangle
 
@@ -47,8 +54,10 @@ export class Hud extends Phaser.Scene {
     this.barT = this.add.rectangle(VIEW_W / 2, 0, VIEW_W, 130, 0x000000).setOrigin(0.5, 1)
     this.barB = this.add.rectangle(VIEW_W / 2, VIEW_H, VIEW_W, 130, 0x000000).setOrigin(0.5, 0)
     this.g = this.add.graphics()
-    this.name = t(70, 40, 22, '#bfe6ff').setText('VANTA  //  UNIT-07').setLetterSpacing(3)
-    this.overload = t(70, 132, 22, '#bfe6ff')
+    this.name = t(70, 40, 22, '#bfe6ff').setText('VANTA').setLetterSpacing(3)
+    this.overload = t(VIEW_W / 2, 86, 34, '#ff9be8')
+      .setOrigin(0.5, 0)
+      .setFontStyle('bold')
     this.charge = t(70, 138, 24, '#e8f8ff')
     this.wave = t(VIEW_W / 2, 44, 22, '#bfe9f2')
       .setOrigin(0.5, 0)
@@ -57,18 +66,21 @@ export class Hud extends Phaser.Scene {
       .setOrigin(0.5, 0)
       .setLetterSpacing(6)
     this.bossLives = t(VIEW_W / 2 + 550, VIEW_H - 90, 36, '#ffc8b0').setFontStyle('bold')
-    this.comboTxt = t(VIEW_W - 90, 250, 120, '#ffffff', DISPLAY)
+    // slanted digits lean out of the box their width is measured as: room on the right keeps them whole
+    this.comboTxt = t(VIEW_W - 90 + 44, 250, 120, '#ffffff', DISPLAY)
       .setOrigin(1, 0.5)
       .setFontStyle('italic')
       .setStroke('#0a0d16', 8)
+      .setPadding(16, 10, 44, 10)
     this.comboLbl = t(VIEW_W - 88, 320, 28, '#ff9fe6')
       .setOrigin(1, 0.5)
       .setText('HITS')
       .setLetterSpacing(8)
     this.go = t(VIEW_W - 90, VIEW_H / 2, 54, '#bfe6ff', DISPLAY)
       .setOrigin(1, 0.5)
-      .setText('GO ▶')
+      .setText('▶')
       .setFontStyle('italic')
+      .setPadding(8, 6, 22, 6)
     this.banner = t(VIEW_W / 2, 330, 84, '#ffffff', DISPLAY)
       .setOrigin(0.5)
       .setLetterSpacing(14)
@@ -83,6 +95,9 @@ export class Hud extends Phaser.Scene {
       .setOrigin(0.5, 0)
       .setAlign('center')
       .setLineSpacing(16)
+    this.mg = this.add.graphics().setDepth(60)
+    this.preview = this.add.image(0, 0, 'bd_mid').setOrigin(0, 0).setDepth(61).setVisible(false)
+    this.menuTexts = []
   }
 
   private bar(x: number, y: number, w: number, h: number, v: number, color: number, lag = -1, skew = 14) {
@@ -153,16 +168,17 @@ export class Hud extends Phaser.Scene {
 
     if (p.overloaded) {
       const pulse = 0.5 + Math.sin(now * 4) * 0.5
-      // Broad edge light and a bright health-panel frame make the state readable without a global banner.
-      for (let i = 0; i < 7; i++) {
-        const width = 8 + i * 11
-        g.fillStyle(COL.main, (0.012 + pulse * 0.008) * (7 - i))
-        g.fillRect(0, 0, width, VIEW_H)
-        g.fillStyle(COL.pink, (0.012 + pulse * 0.008) * (7 - i))
-        g.fillRect(VIEW_W - width, 0, width, VIEW_H)
+      // A vivid frame of light closes in from every side and the whole view takes a faint pink cast, so the
+      // state reads at a glance without a global banner.
+      g.fillStyle(0xff8fe0, 0.035 + pulse * 0.012).fillRect(0, 0, VIEW_W, VIEW_H)
+      for (let i = 0; i < 8; i++) {
+        const width = 10 + i * 13,
+          a = (0.02 + pulse * 0.012) * (8 - i)
+        g.fillStyle(0xb47bff, a).fillRect(0, 0, width, VIEW_H)
+        g.fillStyle(0xff6fd0, a).fillRect(VIEW_W - width, 0, width, VIEW_H)
+        g.fillStyle(0xff8fe0, a * 0.5).fillRect(0, 0, VIEW_W, width * 0.45)
+        g.fillStyle(0xff8fe0, a * 0.5).fillRect(0, VIEW_H - width * 0.45, VIEW_W, width * 0.45)
       }
-      g.fillStyle(0x183256, 0.65).fillRoundedRect(45, 26, 595, p.charging ? 166 : 104, 10)
-      g.lineStyle(2.5, COL.cyan, 0.65 + pulse * 0.25).strokeRoundedRect(45, 26, 595, p.charging ? 166 : 104, 10)
       g.fillStyle(0x081627, 0.72).fillRoundedRect(VIEW_W / 2 - 200, 78, 400, 70, 8)
     }
 
@@ -174,32 +190,11 @@ export class Hud extends Phaser.Scene {
     this.bar(64, 104, 360, 10, en, COL.main, -1, 6)
     g.fillStyle(0x05070c, 0.9)
     for (let i = 1; i < 5; i++) g.fillRect(64 + (360 * i * SHIELD_COST) / p.maxEnergy + 3, 104, 2, 10)
-    this.overload
-      .setPosition(p.overloaded ? VIEW_W / 2 : 70, p.overloaded ? 86 : 132)
-      .setOrigin(p.overloaded ? 0.5 : 0, 0)
-      .setFontSize(p.overloaded ? 34 : 22)
-      .setText(
-        p.overloaded
-          ? `过载  ${p.overloadT.toFixed(1)}s`
-          : p.overloadCd > 0
-            ? `过载冷却  ${p.overloadCd.toFixed(1)}s`
-            : '[ U ]  过载'
-      )
-      .setColor(p.overloaded ? '#ff9be8' : p.overloadCd > 0 ? '#728ca3' : '#bfe6ff')
-      .setFontStyle(p.overloaded ? 'bold' : 'normal')
-    const overloadFill = p.overloaded ? p.overloadT / OVERLOAD_DURATION : 1 - p.overloadCd / OVERLOAD_COOLDOWN
-    this.bar(
-      p.overloaded ? VIEW_W / 2 - 180 : 70,
-      p.overloaded ? 134 : 164,
-      p.overloaded ? 360 : 240,
-      p.overloaded ? 7 : 5,
-      overloadFill,
-      p.overloaded ? COL.pink : p.overloadCd > 0 ? 0x3a5f80 : COL.main,
-      -1,
-      4
-    )
-    this.charge.setVisible(p.charging).setText(`蓄力  ×${p.chargePower.toFixed(2)}`)
-    if (p.charging) this.bar(70, 176, 520, 7, p.chargeT / CHARGE_DURATION, COL.cyan, -1, 5)
+    // overload shows only while it runs: its time left, top centre
+    this.overload.setVisible(p.overloaded && !b.over && !b.paused).setText(`超载  ${p.overloadT.toFixed(1)}s`)
+    if (p.overloaded) this.bar(VIEW_W / 2 - 180, 134, 360, 7, p.overloadT / OVERLOAD_DURATION, COL.pink, -1, 4)
+    this.charge.setVisible(p.charging).setText(`光幕  ×${p.chargePower.toFixed(2)}`)
+    if (p.charging) this.bar(70, 176, 520, 7, p.chargeT / p.chargeSpan, COL.cyan, -1, 5)
 
     // wave
     this.wave.setText(b.waveInfo ? `波次  ${b.waveInfo}` : '')
@@ -211,7 +206,7 @@ export class Hud extends Phaser.Scene {
     if (boss) {
       const v = clamp(boss.hp / boss.maxHp, 0, 1)
       this.bossLag = Math.max(v, this.bossLag - dt * 0.2)
-      this.bossName.setText('典狱者  WARDEN')
+      this.bossName.setText(boss.title)
       this.bossLives.setText(`×${boss.lives}`)
       this.bar(VIEW_W / 2 - 520, VIEW_H - 80, 1040, 18, v, COL.hostile, this.bossLag)
     } else this.bossLag = 1
@@ -234,7 +229,7 @@ export class Hud extends Phaser.Scene {
       g.fillRect(VIEW_W - 90 - 220 * (b.comboT / 170), 344, 220 * (b.comboT / 170), 4)
     }
 
-    this.go.setVisible(b.goHint && live).setX(VIEW_W - 90 + Math.sin(now * 6) * 12)
+    this.go.setVisible(b.goHint && live).setX(VIEW_W - 230 + Math.sin(now * 6) * 12)
 
     // banner
     const bn = b.banner
@@ -265,12 +260,7 @@ export class Hud extends Phaser.Scene {
     let veil = 0,
       big = '',
       body = ''
-    if (b.paused) {
-      veil = 0.72
-      big = '暂 停'
-      body =
-        'A / D  移动        空格  跳跃（空中再按一次二段跳）\nJ  轻攻击（连按五段）        I  重攻击（连按三段，↑ + I 挑空）\nO / Shift  闪避（八方向瞬移）—— 攻击即将命中时闪避可反击；附近有锚点时闪到锚点\nL  处决        U / LB / 左摇杆按下  过载\n过载持续 15 秒，结束后冷却 5 秒：敌人锚点斩击、重击范围扩大、伤害提升 20%\n\nEsc / P  继续'
-    } else if (b.over === 'dead') {
+    if (b.over === 'dead') {
       veil = 0.6
       big = '信号中断'
       body = '按任意键，从当前封锁区重新接入'
@@ -284,5 +274,216 @@ export class Hud extends Phaser.Scene {
     this.veil.setAlpha(damp(this.veil.alpha, veil, 10, dt))
     this.big.setText(big).setVisible(!!big)
     this.body.setText(body).setVisible(!!body)
+    this.terminal(b)
+  }
+
+  /** A line of the terminal's lettering, taken from the pool. */
+  private label(x: number, y: number, str: string, size: number, color: string, alpha = 1, ox = 0, wrap = 0) {
+    let text = this.menuTexts[this.menuUsed++]
+    if (!text) {
+      text = this.add.text(0, 0, '', { fontFamily: FONT }).setDepth(62)
+      this.menuTexts.push(text)
+    }
+    text
+      .setPosition(x, y)
+      .setOrigin(ox, 0.5)
+      .setFontSize(size)
+      .setColor(color)
+      .setAlpha(alpha)
+      .setWordWrapWidth(wrap || null, true)
+      .setLineSpacing(wrap ? 12 : 0)
+      .setText(str)
+      .setVisible(true)
+    return text
+  }
+  /** A keycap with its letter, as on the signs of the opening stretch. Returns its width. */
+  private cap(x: number, y: number, str: string, k: number, color: number) {
+    const text = this.label(0, y, str, 26, '#ffffff', k, 0.5).setFontStyle('bold'),
+      w = Math.max(46, text.width + 24)
+    text.setX(x + w / 2)
+    this.mg.fillStyle(0x0d2f4a, 0.9 * k).fillRoundedRect(x, y - 23, w, 46, 9)
+    this.mg.lineStyle(2, color, k).strokeRoundedRect(x, y - 23, w, 46, 9)
+    return w
+  }
+
+  /**
+   * The terminal: the game's one menu, drawn as a projection over the frozen fight rather than as a page laid over
+   * it. A stage screen (the stages, then skills, sound and credits) and a skills screen (every skill: how it is pressed and what it does).
+   */
+  private terminal(b: Battle) {
+    const m = b.menu,
+      g = this.mg
+    g.clear()
+    for (let i = 0; i < this.menuTexts.length; i++) this.menuTexts[i].setVisible(false)
+    this.menuUsed = 0
+    this.preview.setVisible(false)
+    if (!m) return
+    const pad = b.ctl.padConnected ? 1 : 0,
+      key = (action: string) => KEY_LABEL[action]?.[pad] ?? action,
+      // it unfolds like the signs do: the frame opens, then what is in it comes up
+      open = smooth(clamp(m.age / 0.22, 0, 1)),
+      k = smooth(clamp((m.age - 0.12) / 0.2, 0, 1)),
+      slide = smooth(clamp(m.moved / 0.14, 0, 1)),
+      now = this.time.now / 1000,
+      flicker = 0.93 + 0.07 * Math.sin(now * 9),
+      X = 150,
+      Y = 112,
+      W = VIEW_W - X * 2,
+      H = VIEW_H - Y * 2 + 10,
+      cx = VIEW_W / 2,
+      cy = Y + H / 2,
+      w = W * open,
+      h = Math.max(4, H * smooth(clamp((m.age - 0.06) / 0.2, 0, 1)))
+    g.fillStyle(0x01040a, 0.74 * open).fillRect(0, 0, VIEW_W, VIEW_H)
+    g.fillStyle(0x061827, 0.78 * open).fillRoundedRect(cx - w / 2, cy - h / 2, w, h, 16)
+    g.lineStyle(2.5, COL.cyan, 0.8 * open * flicker).strokeRoundedRect(cx - w / 2, cy - h / 2, w, h, 16)
+    g.fillStyle(COL.cyan, 0.9 * open)
+      .fillRect(cx - w / 2 - 12, cy - 3, 24, 6)
+      .fillRect(cx + w / 2 - 12, cy - 3, 24, 6)
+    if (k <= 0) return
+    // slow scan line, as on the signs
+    g.fillStyle(COL.cyan, 0.06 * k).fillRect(X + 8, Y + ((now * 0.22) % 1) * (H - 8), W - 16, 3)
+    // header: what this is, and the two screens
+    this.label(X + 56, Y + 58, 'VANTA', 30, '#ffffff', k)
+      .setFontFamily(DISPLAY_FONT)
+      .setLetterSpacing(8)
+    this.label(X + 230, Y + 60, '作战终端', 24, '#8fd6ff', k * 0.9).setLetterSpacing(6)
+    const tabs: [string, boolean][] = [
+      ['关卡', m.tab === 'stage'],
+      ['技能', m.tab === 'skills'],
+    ]
+    tabs.forEach(([name, on], i) => {
+      const tx = X + W - 300 + i * 130
+      this.label(tx, Y + 60, name, 26, on ? '#ffffff' : '#6f90a8', k, 0.5).setLetterSpacing(6)
+      if (on) g.fillStyle(COL.cyan, k).fillRect(tx - 38, Y + 82, 76, 3)
+    })
+    g.lineStyle(1.5, COL.cyan, 0.35 * k).lineBetween(X + 40, Y + 100, X + W - 40, Y + 100)
+    const hint =
+      m.tab === 'stage'
+        ? `W / S  选择        ${pad ? 'A' : 'Enter / 空格'}  确认        ${key('skills')}  技能        Esc  返回战斗`
+        : `W / S  切换技能        Esc / ${key('skills')}  返回`
+    this.label(cx, Y + H - 40, hint, 22, '#8fb3c9', k, 0.5).setLetterSpacing(2)
+    const LX = X + 56,
+      LW = 620,
+      RX = X + 730,
+      RW = W - 730 - 56,
+      top = Y + 132
+    if (m.tab === 'stage') {
+      let y = top
+      LEVELS.forEach((level, i) => {
+        const on = m.row === i,
+          lift = on ? slide : 0
+        g.fillStyle(on ? 0x0f3552 : 0x0a2236, (on ? 0.95 : 0.6) * k).fillRoundedRect(LX, y, LW, 118, 12)
+        g.lineStyle(on ? 3 : 1.5, COL.cyan, (on ? 1 : 0.35) * k).strokeRoundedRect(LX, y, LW, 118, 12)
+        if (on) g.fillStyle(COL.cyan, k).fillRect(LX, y + 14, 5, 90)
+        this.label(LX + 34 + lift * 8, y + 59, String(i + 1).padStart(2, '0'), 58, on ? '#ffffff' : '#6f90a8', k)
+          .setFontFamily(DISPLAY_FONT)
+          .setFontStyle('bold')
+        this.label(LX + 150 + lift * 8, y + 42, level.place, 34, on ? '#ffffff' : '#b9d6e8', k).setLetterSpacing(4)
+        this.label(LX + 150 + lift * 8, y + 84, level.name, 22, '#8fb3c9', k)
+        if (i === b.level) this.label(LX + LW - 28, y + 42, '当前', 22, '#7dffb0', k, 1)
+        y += 134
+      })
+      y += 10
+      const names: Record<MenuExtra, string> = {
+        skills: '技能',
+        sound: `声音：${b.sfx.muted ? '关' : '开'}`,
+        fullscreen: '全屏',
+        credits: '资源署名',
+        leave: '退出游戏',
+      }
+      // with every row present the list is a little taller than the panel: the rows close up to fit
+      const pitch = m.extras.length > 4 ? 64 : 74
+      m.extras.forEach((extra, i) => {
+        const on = m.row === LEVELS.length + i,
+          h = pitch - 12
+        g.fillStyle(on ? 0x0f3552 : 0x0a2236, (on ? 0.95 : 0.45) * k).fillRoundedRect(LX, y, LW, h, 10)
+        g.lineStyle(on ? 3 : 1.5, COL.cyan, (on ? 1 : 0.25) * k).strokeRoundedRect(LX, y, LW, h, 10)
+        this.label(
+          LX + 34 + (on ? slide * 8 : 0),
+          y + h / 2,
+          names[extra],
+          28,
+          on ? '#ffffff' : '#b9d6e8',
+          k
+        ).setLetterSpacing(4)
+        if (extra === 'skills' || extra === 'sound')
+          this.label(LX + LW - 28, y + h / 2, extra === 'skills' ? key('skills') : 'M', 22, '#8fb3c9', k, 1)
+        y += pitch
+      })
+      // the right side shows what the cursor is on
+      const PH = Math.round((RW * 9) / 16)
+      if (m.row < LEVELS.length) {
+        const level = LEVELS[m.row],
+          frame = this.textures.getFrame(this.textures.exists(level.picture) ? level.picture : 'bd_mid'),
+          cropW = Math.min(frame.width, Math.round((frame.height * 16) / 9))
+        this.preview
+          .setTexture(frame.texture.key)
+          .setCrop(Math.round(frame.width * 0.24), 0, cropW, frame.height)
+          .setScale(RW / cropW)
+          .setPosition(RX - Math.round(frame.width * 0.24) * (RW / cropW), top)
+          .setAlpha(k * slide)
+          .setVisible(true)
+        g.lineStyle(2, COL.cyan, 0.8 * k).strokeRect(RX, top, RW, PH)
+        this.label(RX, top + PH + 56, level.place, 46, '#ffffff', k).setLetterSpacing(6)
+        this.label(RX + RW, top + PH + 60, m.row === b.level ? '重新开始本关' : '进入', 26, '#7dffb0', k, 1)
+        this.label(RX, top + PH + 108, level.brief, 26, '#b9d6e8', k, 0, RW).setOrigin(0, 0)
+      } else {
+        const extra = m.extras[m.row - LEVELS.length],
+          about: Record<MenuExtra, [string, string]> = {
+            skills: ['全部技能', `逐个说明每个技能的按法和效果。战斗中按 ${key('skills')} 可直接打开。`],
+            sound: [`声音：${b.sfx.muted ? '关' : '开'}`, '确认以切换。战斗中按 M 也可以随时开关。'],
+            fullscreen: [
+              '全屏',
+              '确认后进入全屏；再次确认或按浏览器的 Esc 退出。在 KOOK 中由 KOOK 把游戏区域放到全屏。',
+            ],
+            credits: [
+              '资源署名',
+              '主角模型 Elle · Kai Sama · CC BY 4.0\n敌人模型与动作 · Quaternius · CC0\n背景实拍 · Poly Haven · CC0\n音乐 · Kevin MacLeod (incompetech.com) · CC BY 4.0\n\n确认后打开完整署名页。',
+            ],
+            leave: ['退出游戏', '确认后由 KOOK 关闭这局游戏。游戏不保存进度，下次从头开始。'],
+          },
+          lines = about[extra]
+        g.lineStyle(2, COL.cyan, 0.5 * k).strokeRect(RX, top, RW, PH)
+        this.label(RX + 40, top + 70, lines[0], 44, '#ffffff', k * slide).setLetterSpacing(6)
+        this.label(RX + 40, top + 130, lines[1], 26, '#b9d6e8', k * slide, 0, RW - 80).setOrigin(0, 0)
+      }
+      return
+    }
+    // ---- skills
+    SKILLS.forEach((skill, i) => {
+      const on = m.skill === i,
+        y = top + i * 64
+      g.fillStyle(on ? 0x0f3552 : 0x0a2236, (on ? 0.95 : 0.4) * k).fillRoundedRect(LX, y, LW, 54, 9)
+      g.lineStyle(on ? 3 : 1, COL.cyan, (on ? 1 : 0.2) * k).strokeRoundedRect(LX, y, LW, 54, 9)
+      if (on) g.fillStyle(COL.cyan, k).fillRect(LX, y + 8, 5, 38)
+      this.label(
+        LX + 30 + (on ? slide * 8 : 0),
+        y + 27,
+        skill.name,
+        28,
+        on ? '#ffffff' : '#b9d6e8',
+        k
+      ).setLetterSpacing(4)
+      this.label(LX + LW - 24, y + 27, skill.keys.map(key).join(' + '), 22, on ? '#bfe9ff' : '#6f90a8', k, 1)
+    })
+    // the right side: the skill under the cursor, large — its name, how it is pressed, what it does
+    const skill = SKILLS[m.skill],
+      PH = 640
+    g.fillStyle(0x08202f, 0.55 * k).fillRoundedRect(RX, top, RW, PH, 12)
+    g.lineStyle(2, COL.cyan, 0.5 * k).strokeRoundedRect(RX, top, RW, PH, 12)
+    this.label(RX + 48, top + 26, String(m.skill + 1).padStart(2, '0'), 30, '#6f90a8', k)
+      .setFontFamily(DISPLAY_FONT)
+      .setOrigin(0, 0)
+    this.label(RX + 48, top + 118, skill.name, 64, '#ffffff', k * slide).setLetterSpacing(10)
+    g.fillStyle(COL.cyan, 0.8 * k).fillRect(RX + 48, top + 172, 120 + 60 * slide, 3)
+    let x = RX + 48
+    const ky = top + 238
+    if (skill.how) x += this.label(x, ky, skill.how, 28, '#8fd6ff', k).width + 18
+    skill.keys.forEach((action, i) => {
+      if (i) x += this.label(x + 8, ky, '+', 28, '#8fd6ff', k).width + 18
+      x += this.cap(x, ky, key(action), k, COL.cyan) + 8
+    })
+    this.label(RX + 48, ky + 62, skill.text, 30, '#c8e2f2', k * slide, 0, RW - 96).setOrigin(0, 0)
   }
 }

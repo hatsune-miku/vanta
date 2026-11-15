@@ -1,6 +1,32 @@
 export type Action =
-  'left' | 'right' | 'up' | 'down' | 'jump' | 'light' | 'heavy' | 'dash' | 'exec' | 'overload' | 'pause'
-const ACTIONS: Action[] = ['left', 'right', 'up', 'down', 'jump', 'light', 'heavy', 'dash', 'exec', 'overload', 'pause']
+  | 'left'
+  | 'right'
+  | 'up'
+  | 'down'
+  | 'jump'
+  | 'light'
+  | 'heavy'
+  | 'dash'
+  | 'exec'
+  | 'overload'
+  | 'pause'
+  | 'skills'
+  | 'confirm'
+const ACTIONS: Action[] = [
+  'left',
+  'right',
+  'up',
+  'down',
+  'jump',
+  'light',
+  'heavy',
+  'dash',
+  'exec',
+  'overload',
+  'pause',
+  'skills',
+  'confirm',
+]
 
 const KEYMAP: Record<string, Action> = {
   KeyA: 'left',
@@ -24,8 +50,11 @@ const KEYMAP: Record<string, Action> = {
   KeyE: 'exec',
   KeyF: 'exec',
   KeyU: 'overload',
+  // Escape opens the terminal (which holds the game still); K goes straight to its skills page
   Escape: 'pause',
-  KeyP: 'pause',
+  KeyK: 'skills',
+  Enter: 'confirm',
+  NumpadEnter: 'confirm',
 }
 // standard gamepad mapping
 const PAD: [number, Action][] = [
@@ -38,12 +67,23 @@ const PAD: [number, Action][] = [
   [4, 'overload'],
   [10, 'overload'],
   [9, 'pause'],
+  [8, 'skills'],
   [14, 'left'],
   [15, 'right'],
   [12, 'up'],
   [13, 'down'],
 ]
 const BUFFER = 9
+
+/** How each action is named on signs and prompts: [keyboard, standard gamepad]. */
+export const KEY_LABEL: Record<string, [string, string]> = {
+  light: ['J', 'X'],
+  heavy: ['I', 'Y'],
+  exec: ['L', 'RB'],
+  overload: ['U', 'LB'],
+  dash: ['O', 'B'],
+  skills: ['K', 'Back'],
+}
 
 /** Keyboard + gamepad + scripted input, sampled once per logic frame with press buffering. */
 export class Input {
@@ -145,5 +185,9 @@ export class Input {
   }
   get axis() {
     return (this.down.right ? 1 : 0) - (this.down.left ? 1 : 0)
+  }
+  /** Whether a gamepad is plugged in, so prompts can name its buttons. */
+  get padConnected() {
+    return (navigator.getGamepads ? navigator.getGamepads() : []).some((p) => p && p.connected)
   }
 }

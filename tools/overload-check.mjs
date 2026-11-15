@@ -61,6 +61,10 @@ export default async (g) => {
         jumps: 0,
         jumping: false,
         coyote: 6,
+        chargeCd: 0,
+        chargeCells: 0,
+        chargeLatch: false,
+        counterPending: null,
         overloadT: active ? 15 : 0,
         overloadCd: 0,
       })
@@ -118,8 +122,8 @@ export default async (g) => {
     b.sweepProjs()
     const front = b.fx.ripFronts()[0]
     check(
-      'overload emits an invisible front from the player center',
-      front?.x === p.cx && front.y === p.cy && !b.fx.ripFilter.active
+      'overload sends a visible ripple out from the player center',
+      front?.x === p.cx && front.y === p.cy && b.fx.ripFilter.active
     )
     check('bullets ahead of the wave survive until it reaches them', !near.dead && !edge.dead)
     b.fx.update(0.2)
@@ -130,35 +134,37 @@ export default async (g) => {
     )
     b.fx.update(0.4)
     b.sweepProjs()
-    check('invisible sweep has the ordinary ripple range', edge.dead && !outside.dead && !b.fx.ripFilter.active)
+    check('the sweep has the ordinary ripple range', edge.dead && !outside.dead && b.fx.ripFilter.active)
     b.fx.update(0.1)
-    check('invisible sweep expires normally', b.fx.ripFronts().length === 0)
+    check('the ripple expires normally', b.fx.ripFronts().length === 0 && !b.fx.ripFilter.active)
 
     reset(true)
     let e = enemy()
     let hp = e.hp
     b.attack(p, e.box, MOVES.h1.hits[0].hit, new Set())
-    check('melee damage is multiplied once by 1.2', close(hp - e.hp, 24), hp - e.hp)
+    check('melee damage is multiplied once by 1.2', close(hp - e.hp, 30), hp - e.hp)
     hp = e.hp
     b.attack(p, e.box, MOVES.l1.hits[0].hit, new Set())
-    check('light damage receives only the final multiplier', close(hp - e.hp, 9.6), hp - e.hp)
+    check('light damage receives only the final multiplier', close(hp - e.hp, 12), hp - e.hp)
     hp = e.hp
     b.spawnProj({ kind: 'bolt', x: e.x, y: e.cy, vx: 0, w: 80, h: 80, team: 0, hit: MOVES.h1.hits[0].hit })
     b.updateProjs()
     check('friendly projectiles retain the final multiplier', close(hp - e.hp, MOVES.h1.hits[0].hit.dmg * 1.2))
     hp = e.hp
     p.extremeDodge({ src: e, negate() {} })
+    // the counter follows the slow-motion beat
+    for (let i = 0; i < 12 && !b.cine; i++) p.update()
     for (let i = 0; i < 400 && b.cine; i++) b.tick()
     check('perfect dodge counter gets the same multiplier', close(hp - e.hp, 72 * 1.2))
     hp = e.hp
     p.overloadT = 0
     b.attack(p, e.box, MOVES.h1.hits[0].hit, new Set())
-    check('damage returns to normal when overload ends', close(hp - e.hp, 20))
+    check('damage returns to normal when overload ends', close(hp - e.hp, 25))
     reset(true)
     e = enemy(Warden, 1500, false)
     hp = e.hp
     e.takeHit(MOVES.h1.hits[0].hit, p, 1)
-    check('boss damage receives the same final multiplier', close(hp - e.hp, 24))
+    check('boss damage receives the same final multiplier', close(hp - e.hp, 30))
     const damageHit = { ...MOVES.l1.hits[0].hit, dmg: 10 }
     p.takeHit(damageHit, e, 1)
     check('overload does not amplify incoming damage', p.hp === 90)
@@ -199,8 +205,8 @@ export default async (g) => {
       e.x += direction * 40
       p.update()
       check(
-        `arrival follows the target and puts a full-health grunt into dying facing ${direction}`,
-        e.dying && !e.dead && e.hp === 0 && Math.abs(e.x - p.x) <= 130 && b.comboN === combo + 1,
+        `arrival follows the target and defeats a full-health grunt outright facing ${direction}`,
+        e.dead && !e.dying && e.hp === 0 && Math.abs(e.x - p.x) <= 130 && b.comboN === combo + 1,
         { hp: e.hp, separation: e.x - p.x }
       )
       for (let i = 0; i < 8; i++) p.update()
@@ -232,22 +238,23 @@ export default async (g) => {
       for (const active of [false, true]) {
         reset(active)
         p.facing = direction
-        e = enemy(Grunt, 1000 + direction * 330)
+        // beyond the ordinary reach of the first heavy stage, inside the overload one
+        e = enemy(Grunt, 1000 + direction * 640)
         effects = []
         p.startMove('h1')
         for (let i = 0; i < 15; i++) p.update()
         check(
           `heavy reach ${active ? 'expands' : 'stays normal'} facing ${direction}`,
-          active ? close(e.hp, 9976) : e.hp === 10000,
+          active ? close(e.hp, 9970) : e.hp === 10000,
           10000 - e.hp
         )
         const heavyFx = effects.filter((args) => args[2] === 'slash_wide')
         check(
           `heavy blade light matches reach and color facing ${direction}, overload ${active}`,
           active
-            ? heavyFx.some((args) => close(args[4], 1.17 * 1.25) && args[6] === COL.main) &&
+            ? heavyFx.some((args) => close(args[4], 1.9 * 1.25) && args[6] === COL.main) &&
                 heavyFx.some((args) => args[6] === COL.pink)
-            : heavyFx.length === 1 && close(heavyFx[0][4], 1.17)
+            : heavyFx.length === 1 && close(heavyFx[0][4], 1.9)
         )
       }
     }
@@ -263,7 +270,7 @@ export default async (g) => {
       p.diveLand()
       check(
         `dive landing ${active ? 'inherits larger heavy reach' : 'keeps normal reach'}`,
-        active ? close(e.hp, 10000 - 16 * 1.2 * 2) : e.hp === 10000
+        active ? close(e.hp, 10000 - 20 * 1.2 * 2) : e.hp === 10000
       )
     }
     b.fx.attackSlash = slash

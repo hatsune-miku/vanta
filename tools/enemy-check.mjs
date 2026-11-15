@@ -4,6 +4,7 @@ export default async (g) => {
   const results = await g.eval(async () => {
     const { Grunt, Gunner, Heavy, Titan, Warden, Drone } = await import('/src/game/enemies.ts')
     const { MOVES } = await import('/src/game/player.ts')
+    const { A } = await import('/src/art/anims.ts')
     const b = window.__vanta.scene,
       p = b.player,
       results = []
@@ -47,12 +48,35 @@ export default async (g) => {
         e.hp === 0 && e.dying && !e.dead && b.executionTarget === e && b.kills === kills
       )
       check(`${e.kind}: the same hit cannot also finish the dying target`, hit(e, 1, seen) === 0 && e.dying)
+      const kneels = ['heavy', 'titan', 'warden'].includes(e.kind)
+      e.update()
+      check(
+        `${e.kind}: dying opens with ${kneels ? 'a drop to one knee' : 'a reel'}`,
+        e.an.anim === (kneels ? A.kneel : A.reel)
+      )
       for (let i = 0; i < 600; i++) e.update()
       check(`${e.kind}: dying does not recover or time out`, e.dying && e.hp === 0 && !e.dead)
+      check(
+        `${e.kind}: ${kneels ? 'large frames stay down on one knee' : 'regular frames stay on their feet'}`,
+        kneels ? e.an.anim === A.kneel && e.crouch === 1 && e.coreY > e.cy : e.an.anim === A.stun && e.crouch === 0,
+        { crouch: e.crouch }
+      )
+      b.cam.x = 1400
+      b.draw(1, 0)
+      check(
+        `${e.kind}: dying wears a lit mark on its body`,
+        e.breakLight.length === 3 &&
+          e.breakLight.every((im) => im.visible && im.alpha > 0.4) &&
+          Math.abs(e.breakLight[0].y - e.coreY) < 1 &&
+          e.marker.y < e.breakLight[0].y
+      )
       check(`${e.kind}: zero damage cannot finish a dying target`, hit(e, 0) === 0 && e.dying)
+      const guard = Math.max(80, e.maxHp)
+      hit(e, guard - 1)
+      check(`${e.kind}: stray hits do not finish a dying target`, e.dying && !e.dead && b.kills === kills)
       hit(e, 1)
       check(
-        `${e.kind}: another damaging hit bypasses execution`,
+        `${e.kind}: wearing its guard down bypasses execution`,
         e.dead && !e.dying && b.kills === kills + 1 && !b.executionTarget
       )
       hit(e, 100)
@@ -73,6 +97,27 @@ export default async (g) => {
       e.executed(1)
       check(`${e.kind}: execution finishes a dying enemy`, e.dead && e.hp === 0)
     }
+    // Slashes delivered through a dodge finish what they empty; anything short of that is an ordinary hit.
+    for (const Type of [Grunt, Drone, Titan]) {
+      let e = enemy(Type)
+      const kills = b.kills
+      b.attack(p, e.box, { ...MOVES.l1.hits[0].hit, dmg: e.hp, finish: true }, new Set())
+      check(`${e.kind}: a lethal dodge slash defeats outright`, e.dead && !e.dying && b.kills === kills + 1)
+      e = enemy(Type)
+      b.attack(p, e.box, { ...MOVES.l1.hits[0].hit, dmg: e.hp - 1, finish: true }, new Set())
+      check(`${e.kind}: a dodge slash that is not lethal is an ordinary hit`, !e.dead && !e.dying && e.hp === 1)
+    }
+    let dying = enemy()
+    hit(dying, dying.hp)
+    b.attack(p, dying.box, { ...MOVES.l1.hits[0].hit, dmg: 1, finish: true }, new Set())
+    check('a dodge slash ends a dying target at once', dying.dead && !dying.dying)
+    let boss = enemy(Warden)
+    boss.lives = boss.maxLives = 3
+    b.attack(p, boss.box, { ...MOVES.l1.hits[0].hit, dmg: boss.hp, finish: true }, new Set())
+    check(
+      'a lethal dodge slash floors a boss with lives left and takes one life',
+      boss.lives === 2 && boss.state === 'reviving' && !boss.dying && !boss.dead
+    )
     let e = enemy()
     for (let i = 0; i < 6; i++) hit(e, 8)
     check(
@@ -111,17 +156,15 @@ export default async (g) => {
     p.overloadT = 0
     e.destroy()
     b.enemies = []
-    const anchor = b.anchors[0]
-    p.x = p.px = anchor.x - 200
-    p.y = p.py = anchor.y
-    b.cam.x = anchor.x
-    b.ctl.reset()
-    b.anchor = b.findAnchor()
-    b.draw(1, 0)
-    check(
-      'traversal anchor has its own keycap below the object',
-      b.anchor === anchor && anchor.key.visible && anchor.key.x === anchor.x && anchor.key.y > anchor.im.y
-    )
+    // the map itself no longer carries anchors: outside overload there is nothing to dodge to
+    let found = 0
+    for (const x of [330, 620, 3140, 3400, 6240, 6500, 9340, 9600]) {
+      p.x = p.px = x - 200
+      p.y = p.py = 560
+      b.ctl.reset()
+      if (b.findAnchor()) found++
+    }
+    check('the map has no traversal anchors', found === 0 && b.anchors === undefined, found)
     return results
   })
   for (const result of results) console.log(JSON.stringify(result))

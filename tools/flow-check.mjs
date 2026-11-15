@@ -47,11 +47,11 @@ export default async (g) => {
     // The simulation and presentation must both stay still while the HUD can update.
     b.cam.x += 100
     v.tap('pause')
-    const before = JSON.stringify({ cam: b.cam, tail: b.player.tail.pts, frame: b.frame })
+    const before = JSON.stringify({ cam: b.cam, body: [b.player.rig.x, b.player.rig.y], frame: b.frame })
     b.update(0, 16)
     b.update(16, 16)
-    const after = JSON.stringify({ cam: b.cam, tail: b.player.tail.pts, frame: b.frame })
-    check('pause freezes camera and cloth as well as logic', before === after)
+    const after = JSON.stringify({ cam: b.cam, body: [b.player.rig.x, b.player.rig.y], frame: b.frame })
+    check('pause freezes camera and body as well as logic', before === after)
     v.tap('light')
     v.tap('pause')
     check('attacks pressed during pause are discarded', b.player.state === 'free', b.player.state)

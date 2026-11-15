@@ -24,17 +24,32 @@ export interface CineHost {
   cineAmt: number // 0..1, drives letterbox + backdrop dim
   shake(amp: number, zoomPunch?: number): void
   slowmo(scale: number, realFrames: number): void
+  /** Full-screen radial motion blur centred on a world point; 0 switches it off. */
+  blur(strength: number, x: number, y: number): void
   onExecuted(target: Enemy): void
   onCountered(target: Enemy, hit: HitDef, dir: number): void
 }
 
 type Style = 'core' | 'sunder' | 'storm'
+/** A small target's execution after its slow motion: the rate it plays out at, and how many frames that lasts. */
+const CORE_TAIL_RATE = 0.5,
+  CORE_TAIL = 10
+/** How far each pixel smears toward the target: a light pass while the strike travels, a heavy one in the slow motion. */
+const BLUR_LIGHT = 0.06
+export const BLUR_HEAVY = 0.21
+/** the ripple that spreads from an execution's strike, and from anything given the same treatment */
+export const STRIKE_RIPPLE = { reach: 2200, life: 0.9 }
+/** How large the execution's bloom is on this body: bigger frames are shot wider, so theirs is scaled up. */
+export function execBloomPower(target: Enemy) {
+  return (STYLE[target.kind] ?? 'core') === 'core' ? 1.3 : target.h > 250 ? 1.9 : 1.55
+}
 const STYLE: Record<string, Style> = {
   grunt: 'core',
   gunner: 'core',
   heavy: 'sunder',
   titan: 'storm',
   warden: 'storm',
+  arbiter: 'storm',
   drone: 'core',
 }
 
@@ -48,8 +63,12 @@ const STYLE: Record<string, Style> = {
  *   sunder (heavy)          a leap above the target and a single vertical cleave into the floor
  *   storm  (titan, warden)  a flurry from both sides, finished by the vertical cleave
  *
- * The camera never cuts and never tilts: every shot is a fast glide to a new position and zoom. The whole
- * small-target strike unfolds at full speed, then slows deeply from the impact's visual peak onward.
+ * The camera never cuts and never tilts: every shot is a fast glide to a new position and zoom. Every style ends
+ * in the same bloom: the strike and the bloom's opening play at their own speed, and the deep slow motion begins
+ * only once the bloom reports its visual peak.
+ *
+ * Motion blur comes in two passes. A light one rides each fast beat of the strike, before any slow motion; the
+ * heavy one starts with the slow motion at the bloom's peak and clears as the slow motion runs out.
  */
 export class ExecCine {
   t = 0
@@ -81,6 +100,10 @@ export class ExecCine {
   private lift = 240
   private impact = new ImpactSlowdown()
   private passFrom = 0
+  /** 1 on a fast beat, decaying each cinematic frame: drives the light blur pass */
+  private kick = 0
+  /** Started under overload: every light in the set piece is doubled in saturated blue and pink. */
+  private hot: boolean
 
   constructor(
     private w: CineHost,
@@ -90,11 +113,12 @@ export class ExecCine {
     const p = w.player
     this.dir = Math.sign(target.x - p.x) || p.facing
     this.tx = target.x
-    this.ty = target.cy
+    this.ty = target.coreY
     this.ty0 = target.y
     this.gy = target.flying ? Math.min(GROUND_Y, target.y + 40) : target.y
     this.style = STYLE[target.kind] ?? 'core'
     this.goal = { ...w.cam }
+    this.hot = p.overloaded
     p.cine = true
     p.vx = p.vy = 0
     p.flying = false
@@ -106,6 +130,7 @@ export class ExecCine {
     this.pre = far ? (quick ? 6 : 9) : 0
     w.sfx.play('exStart')
     w.fx.ring(this.tx, this.ty, COL.main, 420, 50, 0.22)
+    if (this.hot) w.fx.ring(this.tx, this.ty, COL.pinkDeep, 520, 70, 0.26)
     if (far) {
       // same language as the dodge: the body is gone, hairlines mark where it went
       const b = w.bounds,
@@ -149,7 +174,12 @@ export class ExecCine {
   private cut(ang: number, len: number, thick: number, shake = 10) {
     const fx = this.w.fx
     this.startRipple()
-    fx.cut(this.tx, this.ty, ang, len, COL.main, 0.3, thick)
+    if (this.hot) {
+      // the overload edge: each cut is a blue and a pink line a hair apart
+      const first = this.lines.length % 2 ? COL.pinkDeep : COL.main
+      fx.cut(this.tx, this.ty, ang, len, first, 0.3, thick)
+      fx.cut(this.tx, this.ty, ang + 0.045, len * 0.92, first === COL.main ? COL.pinkDeep : COL.main, 0.3, thick * 0.7)
+    } else fx.cut(this.tx, this.ty, ang, len, COL.main, 0.3, thick)
     fx.weld(this.tx, this.ty, ang, 30, 1.3, this.gy, 0.3)
     fx.weld(this.tx, this.ty, ang + Math.PI, 30, 1.3, this.gy, 0.3)
     fx.seam(this.tx, this.ty, ang, 240, 1.2)
@@ -157,6 +187,7 @@ export class ExecCine {
     fx.screenFlash(0xffffff, 0.12, 0.06)
     this.lines.push([ang, len])
     this.flash = 4
+    this.kick = 1
     this.target.x = this.tx + (rand() < 0.5 ? -9 : 9)
     this.w.shake(shake, 0.018)
     this.w.sfx.play('exCut')
@@ -198,6 +229,7 @@ export class ExecCine {
       this.at(at + 8, () => {
         this.place(50 * R, d, 0, A.exSlam)
         this.cam(this.tx + d * 20, this.ty + 10, 2.3 * Z)
+        this.kick = 1
       })
       this.at(at + 10, () => {
         this.cut(Math.PI / 2, 1500, 1.6, 16)
@@ -221,7 +253,9 @@ export class ExecCine {
         this.place(-100, d, 0, A.launcher)
         this.target.an.play(A.launched, 2, true)
         fx.slash(this.tx - d * 30, this.ty, 'slash', -0.65, 1.05, d, COL.main, { life: 0.22 })
+        if (this.hot) fx.slash(this.tx - d * 30, this.ty, 'slash', -0.5, 1.12, d, COL.pink, { life: 0.22 })
         this.w.sfx.play('swingHeavy')
+        this.kick = 1
       })
       this.at(t + 3, () => this.startRipple())
       this.at(this.leapAt, () => {
@@ -233,7 +267,8 @@ export class ExecCine {
       this.at(this.boom, () => {
         this.ty = this.target.cy
         this.w.player.an.play(A.passCut, 1, true)
-        fx.slash(this.tx, this.ty, 'slash_wide', -0.45, 1.35, d, COL.cyan, { life: 0.3 })
+        fx.slash(this.tx, this.ty, 'slash_wide', -0.45, 1.35, d, COL.main, { life: 0.3 })
+        if (this.hot) fx.slash(this.tx, this.ty, 'slash_wide', -0.3, 1.45, d, COL.pink, { life: 0.3 })
         this.cut(-0.45 * d, 1000, 1.3, 12)
         this.detonate()
       })
@@ -268,6 +303,7 @@ export class ExecCine {
       fx.screenFlash(0xffffff, 0.1, 0.06)
       this.w.sfx.play('exCut')
       this.flash = 3
+      this.kick = 1
       this.w.shake(8, 0.015)
       const hold = 0.5
       for (const [a, l] of this.lines) fx.cut(this.tx, this.ty, a, l * 0.45, COL.pink, hold, 0.5)
@@ -285,25 +321,24 @@ export class ExecCine {
       boss = tg.isBoss,
       big = tg.h > 250,
       core = this.style === 'core'
-    if (core) {
-      this.impact.arm(fx.coreBurst(this.tx, this.ty, 1.3))
-    } else {
+    if (!core) {
       for (const [a, l] of this.lines) {
         fx.cut(this.tx, this.ty, a, l * 1.4, COL.main, 0.4, 0.7)
         fx.weld(this.tx, this.ty, a, 22, 1.5, this.gy, 0.35)
         fx.weld(this.tx, this.ty, a + Math.PI, 22, 1.5, this.gy, 0.35)
       }
-      fx.flash(this.tx, this.ty, COL.pink, big ? 0.7 : 0.5, 0.16)
       fx.pillar(this.tx, this.gy, COL.main, 1100, 0.45, 0.2)
       fx.pillar(this.tx - 60, this.gy, COL.pinkDeep, 800, 0.32, 0.08)
       fx.pillar(this.tx + 60, this.gy, COL.pinkDeep, 800, 0.32, 0.08)
-    }
-    if (!core) {
       fx.shards(this.tx, this.ty, big ? 44 : 24, COL.main, 1.5)
       fx.weld(this.tx, this.ty, -Math.PI / 2, big ? 110 : 70, 1.6, this.gy, 3.2)
     }
-    fx.screenFlash(0xe8f0ff, core ? 0.08 : 0.2, core ? 0.1 : 0.18)
-    // The single pressure wave is already travelling from the opening beat.
+    // Bigger frames are shot wider, so their bloom is scaled up to fill the same share of the screen.
+    this.impact.arm(fx.bloomBurst(this.tx, this.ty, execBloomPower(tg), this.hot))
+    this.kick = 1
+    // The wave that clears bullets has been travelling since the opening beat; this one is the strike's own,
+    // spreading through the picture as the bloom fades. It is only seen: it sweeps nothing.
+    fx.ripple(this.tx, this.ty, STRIKE_RIPPLE.reach, STRIKE_RIPPLE.life, 1, 0, false)
     this.w.shake(boss || big ? 26 : 20, 0.035)
     this.w.sfx.play('exBoom')
     tg.x = this.tx
@@ -332,12 +367,15 @@ export class ExecCine {
     if (this.style === 'core') {
       const pending = this.impact.at < 0
       this.rate = this.impact.rateAt(phase)
+      // A small target's set piece does not snap back to full speed after the slowed crossing: the bloom and
+      // the hero's follow-through play out at half speed, so the burst is seen fading instead of vanishing.
+      if (this.impact.at >= 0 && phase >= this.impact.at + this.impact.duration) this.rate = CORE_TAIL_RATE
       if (pending && this.impact.at >= 0) {
         this.passFrom = w.player.x
-        this.end = Math.ceil(this.impact.at + this.impact.duration) + 3
+        this.end = Math.ceil(this.impact.at + this.impact.duration) + 3 + CORE_TAIL
       }
     } else {
-      this.rate =
+      const pace =
         this.t > this.boom
           ? lerp(0.6, 1, clamp((this.t - this.boom) / 10, 0, 1))
           : this.t >= this.holdAt && this.holdAt > 0
@@ -345,7 +383,17 @@ export class ExecCine {
             : this.t < this.pre
               ? 1
               : 0.7
+      this.rate = Math.min(pace, this.impact.rateAt(phase))
     }
+    const slowed = this.impact.at >= 0 ? clamp((phase - this.impact.at) / this.impact.duration, 0, 1) : 1
+    // The blur stays locked on the body until it is struck, then on the point of impact.
+    const struck = this.t > this.boom,
+      tg = this.target
+    w.blur(
+      Math.max(BLUR_LIGHT * this.kick, this.impact.at >= 0 ? BLUR_HEAVY * (1 - slowed * slowed) : 0),
+      struck ? this.tx : tg.coreX,
+      struck ? this.ty : tg.coreY
+    )
     w.cineAmt =
       this.t >= this.boom + 2 ? Math.max(0, w.cineAmt - 0.14) : Math.min(1, w.cineAmt + (this.quick ? 0.25 : 0.14))
     this.clock += this.rate
@@ -378,13 +426,15 @@ export class ExecCine {
         t < this.airStrike
           ? lerp(-80, 0, smooth(clamp((t - this.airStrike + 2) / 2, 0, 1)))
           : lerp(0, 45, smooth(clamp((t - this.airStrike) / 3, 0, 1)))
+      // through the target during the slowed crossing, then drifting on while the bloom fades
       const x =
         this.impact.at >= 0 && t >= this.impact.at
           ? lerp(
               this.passFrom,
               this.tx + this.dir * 210,
               smooth(clamp((t - this.impact.at) / this.impact.duration, 0, 1))
-            )
+            ) +
+            this.dir * Math.max(0, t - this.impact.at - this.impact.duration) * 4
           : this.tx + this.dir * offset
       p.x = p.px = clamp(x, this.w.bounds.l + p.w / 2, this.w.bounds.r - p.w / 2)
       p.y = p.py = this.gy - this.lift + 20
@@ -418,15 +468,17 @@ export class ExecCine {
       }
       this.cam(lerp(nx, this.tx, 0.6), lerp(ny, this.ty, 0.5) - 20, 1.25)
     }
+    this.kick *= 0.86
     if (this.liftAt >= 0) {
       this.poseCore(t)
+      if (t >= this.leapAt && t <= this.airStrike) this.kick = 1
       if (t >= this.liftAt && t <= this.airStrike) {
         tg.applyPose(tg.an.update(1))
       }
-      if (t >= this.airStrike - 2 && t < this.end - 3) {
+      if (t >= this.airStrike - 2 && t < this.end - 3 - CORE_TAIL) {
         if (t % 2 === 0) {
           p.rig.setPos(p.x, p.y, this.dir)
-          w.fx.ghost(p.rig, COL.cyan, 0.55, 0.2)
+          w.fx.ghost(p.rig, this.hot && t % 4 === 0 ? COL.pink : COL.cyan, 0.55, 0.2)
         }
       }
     }
@@ -446,6 +498,7 @@ export class ExecCine {
       p.vy = this.liftAt >= 0 ? -90 : 0
       p.an.play(p.onGround ? A.idle : A.fall, 5)
       w.cineAmt = 0
+      w.blur(0, 0, 0)
       this.done = true
       if (this.style !== 'core') w.slowmo(0.75, 8)
     }

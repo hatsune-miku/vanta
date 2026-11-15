@@ -41,13 +41,34 @@ export function prepareElle(root: THREE.Object3D) {
   }
 }
 
+/** The hero's own light: surfaces turning away from the camera glow, so her outline is luminous. */
+export interface RimLight {
+  color: { value: THREE.Color }
+  power: { value: number }
+}
+
 /** Shader treatment preserves the author's texture detail and UVs. Applied after
  * cloning because Three.js deliberately does not copy onBeforeCompile callbacks. */
-export function styleElleMaterial(material: THREE.Material) {
+export function styleElleMaterial(material: THREE.Material, rim: RimLight | null = null) {
   const tone = material.userData.elleTone
-  if (!tone) return
-  material.customProgramCacheKey = () => `elle-${tone}-1`
+  if (!tone && !rim) return
+  material.customProgramCacheKey = () => `elle-${tone ?? 'plain'}-${rim ? 'rim' : 'flat'}-2`
   material.onBeforeCompile = (shader) => {
+    if (rim) {
+      shader.uniforms.elleRimColor = rim.color
+      shader.uniforms.elleRimPower = rim.power
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform vec3 elleRimColor;\nuniform float elleRimPower;')
+        .replace(
+          '#include <emissivemap_fragment>',
+          `
+      #include <emissivemap_fragment>
+      float elleRim = pow(1.0 - saturate(dot(normalize(vViewPosition), normal)), 3.0);
+      totalEmissiveRadiance += elleRimColor * elleRim * elleRimPower;
+    `
+        )
+    }
+    if (!tone) return
     const replacement =
       tone === 'silver'
         ? 'diffuseColor.rgb = mix(vec3(0.12, 0.16, 0.23), vec3(0.88, 0.94, 1.0), pow(clamp(elleLuma * 3.0, 0.0, 1.0), 0.45));'

@@ -3,8 +3,14 @@ import { VIEW_H, VIEW_W } from './config';
 import { Boot } from './scenes/Boot';
 
 import { GAME_SCENES } from './scenes/index';
+import { kook } from './core/kook';
 
 const scenes: Phaser.Types.Scenes.SceneType[] = [Boot, ...GAME_SCENES];
+
+// Embedded in KOOK this is a mini-game session: start talking to the host while the game loads. Opened on its
+// own (or framed by anything else) this does nothing and the game plays as usual.
+kook.start();
+(window as any).__kook = kook;
 
 const game = new Phaser.Game({
   type: Phaser.WEBGL,

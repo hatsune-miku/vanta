@@ -22,7 +22,8 @@ export default async (g) => {
     target.invuln = 0
     target.rig.setAlpha(1)
     b.enemies = [target]
-    for (let i = 0; i < 6; i++) b.attack(p, target.box, MOVES.l1.hits[0].hit, new Set())
+    // Stop at empty health: one more damaging hit would finish a dying target without an execution.
+    for (let i = 0; i < 12 && !target.dying; i++) b.attack(p, target.box, MOVES.l1.hits[0].hit, new Set())
     b.cam.x = 1775
     b.cam.y = 478
     b.cam.zoom = 0.88
@@ -47,8 +48,10 @@ export default async (g) => {
   assert.equal(s.cine, true, 'execution must start before capturing its beats')
   function ct() {
     return g.eval(() => {
-      const c = window.__vanta.scene.cine
-      return c ? { t: c.t, boom: c.boom } : null
+      const b = window.__vanta.scene,
+        c = b.cine
+      // the cinematic's request for this frame; the filter itself is updated on the next draw
+      return c ? { t: c.t, boom: c.boom, rate: c.rate, slowed: c.impact.at >= 0, blur: b.blurShot.strength } : null
     })
   }
   let waveSeen = false
@@ -65,21 +68,46 @@ export default async (g) => {
   }
   assert.ok(waveSeen, 'the opening beat must emit the water ripple')
   await g.shot('c_strike')
-  await g.step(10)
-  await g.shot('c_ripple1')
-  await g.step(12)
-  await g.shot('c_ripple2')
-  let n = 0
-  for (; n < 400; n++) {
-    const c = await ct()
-    if (!c || c.t > c.boom + 1) break
+  // Follow the rest frame by frame: the light blur must come before any slow motion, the heavy one with it.
+  const before = [],
+    during = []
+  let n = 0,
+    peakShot = false
+  for (; n < 600; n++) {
     await g.step(1)
+    const c = await ct()
+    if (!c) break
+    ;(c.slowed ? during : before).push(c)
+    if (n === 4) await g.shot('c_ripple1')
+    if (c.slowed && !peakShot) {
+      peakShot = true
+      await g.shot('c_detonate')
+    }
+    if (during.length === 14) await g.shot('c_ripple2')
   }
-  assert.ok(n < 400, 'execution must reach detonation')
-  await g.shot('c_detonate')
-  for (let i = 0; i < 200 && (await g.state()).cine; i++) await g.step(1)
+  assert.ok(n < 600 && peakShot, 'execution must reach detonation and return control')
+  const light = Math.max(...before.map((c) => c.blur)),
+    heavy = Math.max(...during.map((c) => c.blur))
+  assert.ok(
+    before.every((c) => c.rate === 1),
+    'the strike and the opening of the bloom play at full speed'
+  )
+  assert.ok(light > 0.02 && light < 0.1, `a light motion blur precedes the slow motion (${light})`)
+  assert.ok(during[0].rate < 0.5 && during[0].blur > light * 2, 'the heavy motion blur starts with the slow motion')
+  assert.ok(heavy > light * 3, `the second blur is clearly heavier (${light} -> ${heavy})`)
+  assert.ok(during.filter((c) => c.rate < 0.5).length >= 30, 'the slow motion lasts long enough to read the bloom')
   s = await g.state()
   assert.equal(s.cine, false, 'execution must return control')
   assert.equal(s.execs, execsBefore + 1)
+  const after = await g.eval(() => {
+    const b = window.__vanta.scene
+    b.draw(1, 0)
+    return { blur: b.motion.strength, texts: b.fx.texts.map((x) => x.t.text) }
+  })
+  assert.equal(after.blur, 0, 'motion blur is switched off once control returns')
+  assert.ok(
+    after.texts.every((text) => text.startsWith('+')),
+    `no damage numbers are shown (${after.texts})`
+  )
   console.log(JSON.stringify(await g.state()))
 }

@@ -2,7 +2,12 @@ import * as Phaser from 'phaser'
 
 import { tex } from './textures'
 
-/** A clean crescent: translucent volume that thickens toward the leading tip, under one continuous bright edge. */
+/**
+ * A swung blade's wake, not a compass arc. The outer edge unfurls outward as the swing extends and curls back in
+ * at the very tip; the body is a thin trail that swells late and closes into a hooked point; a few fine strands
+ * peel off the tail and fan out behind it. Every contour is a smooth curve: nothing wobbles, tears or breaks, and
+ * the bright edge stays one continuous line.
+ */
 function bladeTexture(scene: Phaser.Scene, key: string, sweep: number, thickness: number) {
   const size = 512,
     radius = 234,
@@ -21,26 +26,56 @@ function bladeTexture(scene: Phaser.Scene, key: string, sweep: number, thickness
     const t = Math.max(0, Math.min(1, x))
     return t * t * (3 - 2 * t)
   }
+  // t runs along the sweep from the tail (0) to the leading tip (1); the body is widest about two thirds along.
+  const widest = radius * thickness,
+    profilePeak = Math.pow(0.68, 1.5) * Math.pow(0.32, 0.7)
+  // [distance inside the outer edge at the body, drift inward toward the tail, brightness, first t, last t]
+  const strands = [
+    [0.14, 0.3, 0.5, 0, 0.5],
+    [0.36, 0.72, 0.36, 0.06, 0.44],
+    [0.62, 1.2, 0.24, 0.13, 0.37],
+  ]
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const dx = x + 0.5 - size / 2,
         dy = y + 0.5 - size / 2,
         t = Math.atan2(dy, dx) / sweep + 0.5
       if (t <= 0 || t >= 1) continue
-      // The outer edge is a true arc. The body is thin at the tail, widest near the leading tip, and closes at both ends.
-      const width = radius * thickness * 0.95 * Math.pow(Math.sin(Math.PI * t), 0.8) * (0.4 + 0.6 * t),
-        u = (radius - Math.hypot(dx, dy)) / width
-      if (u <= 0 || u >= 1) continue
-      const ends = feather(t / 0.07) * feather((1 - t) / 0.055),
-        edge = feather(u / 0.045) * feather((1 - u) / 0.26),
-        ridge = Math.exp(-Math.pow((u - 0.28) / 0.3, 2)),
+      const hook = Math.max(0, (t - 0.8) / 0.2),
+        outer = radius * (0.8 + 0.2 * Math.pow(t, 0.7) - 0.085 * hook * hook),
+        inward = outer - Math.hypot(dx, dy)
+      if (inward <= 0 || inward >= widest * 1.7) continue
+      const width = (widest * Math.pow(t, 1.5) * Math.pow(1 - t, 0.7)) / profilePeak,
+        u = inward / width,
+        ends = feather(t / 0.07) * feather((1 - t) / 0.045),
+        // the inner side is smoky along the tail and crisp behind the tip
+        edge = u < 1 ? feather(u / 0.045) * feather((1 - u) / (0.5 - 0.34 * t)) : 0,
+        ridge = Math.exp(-Math.pow((u - 0.28) / 0.3, 2))
+      // Strands leave the body where it is still thin and spread apart toward the tail.
+      let strand = 0
+      if (t < 0.5) {
+        for (const [at, drift, power, first, last] of strands) {
+          const reveal = feather((t - first) / 0.1) * (1 - feather((t - last + 0.2) / 0.2)),
+            offset = widest * (at + drift * Math.pow(0.52 - t, 1.5))
+          strand = Math.max(strand, Math.exp(-Math.pow((inward - offset) / (widest * 0.03), 2)) * power * reveal)
+        }
+      }
+      const volume = ends * edge * (0.3 + 0.6 * ridge),
         i = (y * size + x) * 4
-      bodyPixels.data[i] = bodyPixels.data[i + 1] = bodyPixels.data[i + 2] = Math.round((0.23 + ridge * 0.77) * 255)
-      bodyPixels.data[i + 3] = Math.round(ends * edge * (0.3 + 0.6 * ridge) * 255)
+      if (volume <= 0 && strand <= 0.004) continue
+      bodyPixels.data[i] =
+        bodyPixels.data[i + 1] =
+        bodyPixels.data[i + 2] =
+          Math.round((0.23 + Math.max(edge > 0 ? ridge : 0, strand) * 0.77) * 255)
+      bodyPixels.data[i + 3] = Math.round(Math.max(volume, strand) * 255)
       spinePixels.data[i] = spinePixels.data[i + 1] = spinePixels.data[i + 2] = 255
-      spinePixels.data[i + 3] = Math.round(ends * Math.exp(-Math.pow((u - 0.2) / 0.036, 2)) * 0.85 * 255)
+      spinePixels.data[i + 3] = Math.round(
+        Math.max(ends * Math.exp(-Math.pow((u - 0.2) / 0.042, 2)) * 0.85, strand * 0.7) * 255
+      )
       hotPixels.data[i] = hotPixels.data[i + 1] = hotPixels.data[i + 2] = 255
-      hotPixels.data[i + 3] = Math.round(ends * edge * Math.exp(-Math.pow((u - 0.2) / 0.09, 2)) * 255)
+      hotPixels.data[i + 3] = Math.round(
+        Math.max(ends * edge * Math.exp(-Math.pow((u - 0.2) / 0.096, 2)), strand * 0.5) * 255
+      )
     }
   }
   bg.putImageData(bodyPixels, 0, 0)
@@ -87,6 +122,37 @@ export function buildBladeFx(scene: Phaser.Scene) {
   ] as const) {
     bladeTexture(scene, `blade_${key}`, sweep, thickness)
   }
+
+  // One streak of a dodge path: a hard bright core with a tight glow, fading out toward the start of the path.
+  tex(
+    scene,
+    'dash_line',
+    512,
+    32,
+    256,
+    16,
+    (g) => {
+      const across = g.createLinearGradient(0, -16, 0, 16)
+      across.addColorStop(0, 'rgba(255,255,255,0)')
+      across.addColorStop(0.3, 'rgba(255,255,255,0.1)')
+      across.addColorStop(0.43, 'rgba(255,255,255,0.75)')
+      across.addColorStop(0.5, 'rgba(255,255,255,1)')
+      across.addColorStop(0.57, 'rgba(255,255,255,0.75)')
+      across.addColorStop(0.7, 'rgba(255,255,255,0.1)')
+      across.addColorStop(1, 'rgba(255,255,255,0)')
+      g.fillStyle = across
+      g.fillRect(-256, -16, 512, 32)
+      g.globalCompositeOperation = 'destination-in'
+      const along = g.createLinearGradient(-256, 0, 256, 0)
+      along.addColorStop(0, 'rgba(255,255,255,0)')
+      along.addColorStop(0.45, 'rgba(255,255,255,0.7)')
+      along.addColorStop(0.9, 'rgba(255,255,255,1)')
+      along.addColorStop(1, 'rgba(255,255,255,0.6)')
+      g.fillStyle = along
+      g.fillRect(-256, -16, 512, 32)
+    },
+    1
+  )
 
   tex(
     scene,

@@ -30,17 +30,23 @@ export default async (g) => {
     const hp = enemy.hp
     b.stop = b.shakeAmp = b.punch = 0
     check('light hit connects once', b.attack(p, box, hit, seen) === 1 && enemy.hp === hp - hit.dmg)
+    check('hits do not pop damage numbers', b.fx.texts.length === 0)
     check(
-      'light hit keeps six frames of freeze without moving the camera',
-      b.stop === 6 && b.shakeAmp === 0 && b.punch === 0,
+      'a light hit does not freeze the frame or move the camera',
+      b.stop === 0 && b.shakeAmp === 0 && b.punch === 0,
       {
         stop: b.stop,
         shake: b.shakeAmp,
       }
     )
+    check('same swing cannot repeat its damage', b.attack(p, box, hit, seen) === 0 && enemy.hp === hp - hit.dmg)
+    // Only the second heavy stage freezes the frame on contact.
+    const pausing = MOVES.h2.hits[0].hit
+    b.attack(p, box, pausing, new Set())
     check(
-      'same swing cannot repeat its damage or freeze',
-      b.attack(p, box, hit, seen) === 0 && enemy.hp === hp - hit.dmg && b.stop === 6
+      'the second heavy stage freezes the frame on contact, without camera movement',
+      pausing.pause === true && b.stop === pausing.stop && b.stop === 16 && b.shakeAmp === 0 && b.punch === 0,
+      { stop: b.stop, shake: b.shakeAmp }
     )
     p.px = p.x - 25
     b.draw(0.2, 1 / 60)
@@ -49,7 +55,7 @@ export default async (g) => {
       pose = JSON.stringify(p.an.pose),
       ex = enemy.x
     b.ctl.virtual.light = true
-    window.__vanta.step(6)
+    window.__vanta.step(16)
     b.draw(0.7, 1 / 60)
     check(
       'hitstop freezes logic, animation and interpolation',
@@ -60,21 +66,21 @@ export default async (g) => {
     b.stop = b.shakeAmp = 0
     check(
       'whiff does not freeze or shake',
-      b.attack(p, { x: 9000, y: 0, w: 10, h: 10 }, hit, new Set()) === 0 && b.stop === 0 && b.shakeAmp === 0
+      b.attack(p, { x: 9000, y: 0, w: 10, h: 10 }, pausing, new Set()) === 0 && b.stop === 0 && b.shakeAmp === 0
     )
     const heavy = MOVES.h1.hits[0].hit
     b.attack(p, box, heavy, new Set())
-    check('heavy hit freezes longer without camera movement', b.stop === 13 && b.shakeAmp === 0 && b.punch === 0, {
-      stop: b.stop,
-      shake: b.shakeAmp,
-    })
-    b.stop = b.shakeAmp = 0
+    check(
+      'no other attack freezes the frame: not the first heavy stage',
+      b.stop === 0 && b.shakeAmp === 0 && b.punch === 0,
+      {
+        stop: b.stop,
+        shake: b.shakeAmp,
+      }
+    )
     b.spawnProj({ kind: 'bolt', x: enemy.x, y: enemy.cy, team: 0, vx: 0, w: 80, h: 80, hit: heavy })
     b.updateProjs()
-    check(
-      'friendly projectiles keep impact freeze without camera movement',
-      b.stop === heavy.stop && b.shakeAmp === 0 && b.punch === 0
-    )
+    check('nor a friendly projectile', b.stop === 0 && b.shakeAmp === 0 && b.punch === 0)
     p.invuln = 0
     p.takeHit({ ...hit, dmg: 1 }, enemy, -1)
     b.shake(50, 0.1)
@@ -123,7 +129,12 @@ export default async (g) => {
       tapHeight = jumpHeight(false, true)
     check('held jump reaches 1.5 times its previous apex', Math.abs(fullHeight / 312 - 1.5) < 0.002, fullHeight)
     check('second jump reaches 1.5 times its previous apex', Math.abs(airHeight / (736 / 3) - 1.5) < 0.002, airHeight)
-    check('short tap reaches 1.5 times its previous apex', Math.abs(tapHeight / 55 - 1.5) < 0.002, tapHeight)
+    // the lowest platforms stand 250 and 270 above the deck, and the next tier 220 above those
+    check(
+      'the shortest tap still carries her onto a platform, well short of a full jump',
+      tapHeight >= 285 && tapHeight <= 330 && tapHeight < fullHeight * 0.75,
+      tapHeight
+    )
     b.plats = plats
     b.ctl.reset()
 
@@ -159,16 +170,19 @@ export default async (g) => {
     check('the already-open bloom decays after the peak', envelope.im.alpha < envelope.a0)
 
     const ripple = b.fx.ripple.bind(b.fx)
-    const burst = b.fx.coreBurst.bind(b.fx),
+    const burst = b.fx.bloomBurst.bind(b.fx),
       cut = b.fx.cut.bind(b.fx)
+    // `count` is the wave that sweeps bullets away; the strike's own ripple is only seen
     let count = 0,
+      strikeWaves = 0,
       bursts = 0,
       cuts = 0
     b.fx.ripple = (...args) => {
-      count++
+      if (args[6] === false) strikeWaves++
+      else count++
       ripple(...args)
     }
-    b.fx.coreBurst = (...args) => {
+    b.fx.bloomBurst = (...args) => {
       bursts++
       return burst(...args)
     }
@@ -182,7 +196,7 @@ export default async (g) => {
         Stage3D.I.update(4)
         b.stop = b.shakeAmp = 0
         b.cineAmt = 0
-        count = bursts = cuts = 0
+        count = strikeWaves = bursts = cuts = 0
         p.x = p.px = 1000
         p.y = p.py = 900
         p.state = 'free'
@@ -209,7 +223,11 @@ export default async (g) => {
           slowStep = 0,
           premature = false,
           peakVisible = false,
-          finishRate = 1
+          finishRate = 1,
+          deepTicks = 0,
+          deepEarly = false,
+          tailTicks = 0,
+          fullAfterDeep = false
         for (let i = 0; i < 300 && !cine.done; i++) {
           b.ctl.virtual.light = i % 2 === 0
           const previousX = p.x
@@ -225,6 +243,13 @@ export default async (g) => {
             slowTicks++
             slowStep = Math.max(slowStep, Math.abs(p.x - previousX))
           }
+          if (cine.rate === 0.16) {
+            deepTicks++
+            deepEarly ||= cine.t <= cine.boom || !cine.impact.peak?.reached
+          } else if (deepTicks > 0) {
+            if (cine.rate === 0.5) tailTicks++
+            else fullAfterDeep = true
+          }
           if (cine.t > cine.boom) finishRate = Math.min(finishRate, cine.rate)
           if (cine.t <= cine.boom && !p.cine) lockedUntilStrike = false
           peakShake = Math.max(peakShake, b.shakeAmp)
@@ -237,11 +262,12 @@ export default async (g) => {
           }
           if (first >= 0 && i === first + 10) fastRadius = fronts[0]?.r ?? 0
         }
+        const small = ['grunt', 'gunner', 'drone'].includes(target.kind)
         check(
-          `${target.kind}: control returns promptly after the strike, while effects continue`,
+          `${target.kind}: control returns ${small ? 'once the half-speed tail has played' : 'promptly after the strike'}, while effects continue`,
           cine.done &&
             lockedUntilStrike &&
-            cine.t <= cine.boom + 16 &&
+            cine.t <= cine.boom + (small ? 26 : 16) &&
             target.dead &&
             !b.fx.settled &&
             !b.ctl.peek('light')
@@ -249,31 +275,35 @@ export default async (g) => {
         b.ctl.reset()
         check(
           `${target.kind} ${quick ? 'quick' : 'full'}: one fast wave during execution`,
-          cine.done && early && count === 1 && maxFronts === 1 && fastRadius > 300 && bolt.dead,
-          { count, early, fastRadius, clearedBullet: bolt.dead }
+          cine.done && early && count === 1 && maxFronts === 1 && fastRadius > 300 && bolt.dead && strikeWaves === 1,
+          { count, strikeWaves, early, fastRadius, clearedBullet: bolt.dead }
         )
         check(
           `${target.kind}: restrained execution shake ends with control restored`,
           peakShake > 0 && peakShake <= 26 && peakPunch <= 0.035 && b.shakeAmp === 0 && b.punch === 0 && !p.cine,
           { peakShake, peakPunch }
         )
-        const small = ['grunt', 'gunner', 'drone'].includes(target.kind)
-        if (small)
+        if (small) {
           check(
             `${target.kind}: full-speed strike reaches the visible bloom peak before the slow passing movement`,
-            finishRate === 0.16 &&
-              !premature &&
-              peakVisible &&
-              slowTicks >= 37 &&
-              slowTicks <= 39 &&
-              slowStep < 18 &&
-              p.y < 800,
+            finishRate === 0.16 && !premature && peakVisible && slowStep < 18 && p.y < 800,
             { slowTicks, slowStep, finishRate, premature, peakVisible }
           )
+          check(
+            `${target.kind}: after the slow crossing the set piece plays out at half speed, never back at full`,
+            tailTicks >= 20 && tailTicks <= 28 && !fullAfterDeep && slowTicks === deepTicks + tailTicks,
+            { tailTicks, fullAfterDeep, slowTicks, deepTicks }
+          )
+        }
         check(
-          `${target.kind}: ${small ? 'one aerial cut with a simultaneous explosion' : 'heavy execution keeps cuts'}`,
-          small ? bursts === 1 && cuts === 1 : bursts === 0 && cuts > 0,
+          `${target.kind}: ${small ? 'one aerial cut with a simultaneous bloom' : 'heavy execution keeps its cuts and ends in one bloom'}`,
+          small ? bursts === 1 && cuts === 1 : bursts === 1 && cuts > 0,
           { bursts, cuts }
+        )
+        check(
+          `${target.kind}: the deep slow motion waits for the bloom's peak`,
+          deepTicks >= 37 && deepTicks <= 39 && !deepEarly && finishRate === 0.16,
+          { deepTicks, deepEarly, finishRate }
         )
         if (!target.gone) target.destroy()
         b.enemies = []
@@ -282,7 +312,7 @@ export default async (g) => {
       }
     }
     b.fx.ripple = ripple
-    b.fx.coreBurst = burst
+    b.fx.bloomBurst = burst
     b.fx.cut = cut
     return results
   })

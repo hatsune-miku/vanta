@@ -21,7 +21,15 @@ export interface HitDef {
   shake: number
   /** A projectile can retain the damage bonus it had when released. */
   multiplier?: number
+  /** When this hit empties the health bar the target is defeated outright, skipping the dying state. */
+  finish?: boolean
   knock?: boolean // knockdown on landing
+  /** The hit freezes the frame on contact for `stop` frames. Only the second heavy stage does. */
+  pause?: boolean
+  /** A weakened execution bloom opens on the bodies this hit lands on (the burst's power). Light only, no effect on play. */
+  bloom?: number
+  /** Bodies without armour are held reeling where they stand for this many frames instead of being thrown. */
+  stagger?: number
   heavy?: boolean
   spike?: boolean // drives airborne targets down
 }
@@ -77,12 +85,16 @@ export interface World {
   bounds: { l: number; r: number }
   frame: number
   hitstop(n: number): void
-  shake(amp: number, zoomPunch?: number): void
+  shake(amp: number, zoomPunch?: number, always?: boolean): void
   slowmo(scale: number, realFrames: number): void
   /** Resolve an attack box against the opposing team. Returns number of targets hit. */
   attack(src: Actor, box: Box, hit: HitDef, hitSet: Set<Actor>): number
   spawnProj(p: Partial<Proj> & { kind: Proj['kind']; x: number; y: number; team: number }): Proj
   spawnSurge(hit: HitDef): Proj
+  /** The overload charge's wave: it falls on the whole screen and bites every enemy in view while it lasts. */
+  spawnVerdict(hit: HitDef): void
+  /** Bring another enemy into the fight (a boss calling for help). */
+  reinforce(kind: string, x: number): void
   takeToken(a: Actor, ranged: boolean): boolean
   releaseToken(a: Actor): void
   onEnemyDead(a: Actor, executed: boolean): void
@@ -130,6 +142,8 @@ export abstract class Actor {
   flying = false
   dropT = 0
   isBoss = false
+  /** a boss's name, as the HUD and the lockdown banner give it */
+  title = ''
   shadow!: Phaser.GameObjects.Image
 
   constructor(public world: World) {}

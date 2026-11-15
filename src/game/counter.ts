@@ -1,5 +1,5 @@
 import type { HitDef } from './actor'
-import type { CineHost } from './cine'
+import { BLUR_HEAVY, type CineHost, STRIKE_RIPPLE, execBloomPower } from './cine'
 import type { Enemy } from './enemies'
 import type { Fx } from './fx'
 import { ImpactSlowdown } from './impact'
@@ -8,7 +8,10 @@ import { A } from '../art/anims'
 import { COL, GROUND_Y } from '../config'
 import { clamp, lerp, smooth } from '../core/util'
 
-/** A single passing countercut for every enemy size; no execution timeline or finishing blow. */
+/**
+ * A single passing countercut for every enemy size; no execution timeline or finishing blow. The cut itself is
+ * given the execution's full treatment: the same bloom at the same size, its ripple, its shake and its blur.
+ */
 export class CounterCine {
   t = 0
   done = false
@@ -96,7 +99,10 @@ export class CounterCine {
       w.fx.slash(target.x, target.cy, 'slash_thin', -0.3, 1.15, this.dir, COL.cyan, { life: 0.2 })
       w.fx.cut(target.x, target.cy, -0.3 * this.dir, 560, COL.main, 0.22, 0.9)
       w.fx.glint(target.x, target.cy, COL.cyan, 0.5, 0.16)
-      this.impact.arm(w.fx.coreBurst(target.x, target.cy, 0.55))
+      this.impact.arm(w.fx.bloomBurst(target.x, target.cy, execBloomPower(target), p.overloaded))
+      w.fx.ripple(target.x, target.cy, STRIKE_RIPPLE.reach, STRIKE_RIPPLE.life, 1, 0, false)
+      w.shake(target.isBoss || target.h > 250 ? 26 : 20, 0.035)
+      w.sfx.play('exBoom')
       w.onCountered(target, this.counterHit, this.dir)
     }
     this.targetClock += this.rate
@@ -109,6 +115,9 @@ export class CounterCine {
     w.cam.zoom = lerp(w.cam.zoom, 1.08, 0.12)
     w.cam.rot = 0
     w.cineAmt = this.t < this.endAt - 3 ? Math.min(0.12, w.cineAmt + 0.025) : Math.max(0, w.cineAmt - 0.05)
+    // the heavy blur of an execution, worn off over the slowed pass
+    const slowed = this.impact.at >= 0 ? clamp((this.t - this.impact.at) / this.impact.duration, 0, 1) : 1
+    w.blur(this.impact.at >= 0 ? BLUR_HEAVY * (1 - slowed * slowed) : 0, target.x, target.cy)
     if (this.t >= this.endAt) {
       this.done = true
       p.cine = false
@@ -122,6 +131,7 @@ export class CounterCine {
       p.vy = p.onGround ? 0 : -80
       p.an.play(p.onGround ? A.idle : A.fall, 4)
       w.cineAmt = 0
+      w.blur(0, 0, 0)
     }
   }
 }

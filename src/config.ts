@@ -4,7 +4,9 @@ export const VIEW_H = 1080;
 export const GROUND_Y = 900;
 export const STEP = 1 / 60;
 export const GRAVITY = 3200;
-export const WORLD_W = 12200;
+/** the opening stretch ahead of the first lockdown, where the controls are posted */
+export const LEAD_W = 4700;
+export const WORLD_W = 12200 + LEAD_W;
 /** gameplay camera zoom; below 1 shows more of the arena */
 export const BASE_ZOOM = 0.88;
 /** world y the camera centres on while the player is on the floor */
@@ -29,6 +31,14 @@ export const DEPTH = {
   backFx: 10, tail: 18, enemy: 20, player: 30, frontFx: 40, fore: 60,
 };
 
+/** The wordmark's face (loaded by index.html, awaited in Boot) and the face for everything else. */
+export const DISPLAY_FONT = 'Orbitron, "Bahnschrift", "Segoe UI", sans-serif';
+export const UI_FONT = '"Bahnschrift", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
+
 const params = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
 export const TEST_MODE = params.has('test');
 export const START_ARENA = Number(params.get('arena') ?? 0) || 0;
+/** `?level=2` starts on that stage (1-based in the address, 0-based here) */
+export const START_LEVEL = Math.max(0, (Number(params.get('level') ?? 1) || 1) - 1);
+/** `?tutorial` runs the tutorial in scripted runs, which otherwise skip it */
+export const FORCE_TUTORIAL = params.has('tutorial');

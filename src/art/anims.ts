@@ -8,6 +8,8 @@ export interface Anim {
   loop?: boolean
   rate?: number
   keys?: [frame: number, time: number][]
+  /** After its last key, a keyed entry drifts back and forth between these two frames instead of freezing. */
+  sway?: [from: number, to: number]
 }
 export interface PoseRef {
   clip: string
@@ -27,6 +29,7 @@ const seg = (clip: string, t0: number, t1: number, frames: number): Anim => ({
   ],
 })
 const map = (clip: string, keys: [number, number][]): Anim => ({ clip, keys })
+const swaying = (a: Anim, from: number, to: number): Anim => ({ ...a, sway: [from, to] })
 
 /** clip durations, needed to wrap looping clips */
 const DUR: Record<string, number> = {
@@ -45,6 +48,12 @@ const DUR: Record<string, number> = {
 export function timeAt(a: Anim, f: number): number {
   if (a.keys) {
     const k = a.keys
+    if (a.sway && f > a.sway[1]) {
+      const [from, to] = a.sway,
+        span = to - from,
+        phase = (f - from) % (span * 2)
+      f = from + (phase <= span ? phase : span * 2 - phase)
+    }
     if (f <= k[0][0]) return k[0][1]
     for (let i = 1; i < k.length; i++)
       if (f <= k[i][0]) {
@@ -68,8 +77,12 @@ export class Animator {
   play(a: Anim, blend = 5, restart = false) {
     if (a === this.anim && !restart) return
     const p = this.pose
-    p.prev = p.clip
-    p.prevTime = p.time
+    // A blend that has barely begun is not a pose to leave from: keep blending out of the one it started with,
+    // or a long settle interrupted early would snap to its far end first.
+    if (!(p.prev !== null && p.w < 0.5)) {
+      p.prev = p.clip
+      p.prevTime = p.time
+    }
     this.anim = a
     this.t = 0
     this.blend = 0
@@ -83,7 +96,9 @@ export class Animator {
     p.time = timeAt(this.anim, this.t)
     if (p.prev !== null) {
       this.blend += Math.abs(dt) || 1
-      p.w = Math.min(1, this.blend / this.blendLen)
+      const k = Math.min(1, this.blend / this.blendLen)
+      // long blends ease in and out; short ones stay crisp
+      p.w = this.blendLen > 8 ? k * k * (3 - 2 * k) : k
       if (p.w >= 1 || p.prev === p.clip) p.prev = null
     } else p.w = 1
     return p
@@ -131,21 +146,35 @@ export const A = {
     [38, 1.5],
   ]),
   // heavy chain and derived moves
+  // heavy chain: a straight rising cleave, a turning reverse-grip cut, a vanishing flurry, then the falling wheel
   h1: map('Sword_Heavy_Combo', [
-    [0, 1.35],
-    [16, 1.8],
-    [40, 2.2],
+    [0, 1.78],
+    [11, 1.85],
+    [15, 1.98],
+    [19, 2.12],
+    [38, 2.2],
+    // the recovery: the follow-through settles instead of freezing
+    [48, 2.24],
   ]),
   h2: map('Sword_Heavy_Combo', [
-    [0, 2.2],
-    [14, 2.55],
-    [36, 3.1],
+    [0, 0.62],
+    [5, 0.92],
+    [9, 1.1],
+    [13, 1.28],
+    [32, 1.36],
+    [42, 1.4],
   ]),
-  h3: map('Sword_Attack', [
-    [0, 0.35],
-    [18, 0.85],
-    [44, 1.45],
+  h3: hold('Sword_Regular_A', 0.28),
+  gear: hold('Sword_Attack', 0.42),
+  // the landing holds low for a long beat before she straightens
+  gearLand: map('Sword_Attack', [
+    [0, 0.5],
+    [6, 0.72],
+    [24, 0.9],
+    [44, 1.25],
   ]),
+  // the dodge: one held lunge, drawn as a ghost
+  dashLunge: hold('Sword_Dash', 0.5),
   launcher: map('Sword_Attack', [
     [0, 0.05],
     [9, 0.28],
@@ -189,6 +218,17 @@ export const A = {
   getup: seg('LayToIdle', 0.2, 1.5, 22),
   die: seg('Death01', 0, 2.3, 80),
   stun: loop('Zombie_Idle_Loop'),
+  // dying: regular frames reel before they sway on their feet; large frames sink to one knee and stay down
+  reel: seg('Idle_Shield_Break', 0.1, 1.0, 32),
+  kneel: swaying(
+    map('Fixing_Kneeling', [
+      [0, 0.2],
+      [26, 0.85],
+      [206, 3.85],
+    ]),
+    26,
+    206
+  ),
   // execution beats (held frames of library clips)
   exDraw: hold('Sword_Idle', 0),
   exSeed: seg('Spell_Simple_Enter', 0, 0.6, 10),

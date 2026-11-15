@@ -3,7 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 
 import { dressCharacter } from './costume'
-import { prepareElle, styleElleMaterial } from './elle'
+import { type RimLight, prepareElle, styleElleMaterial } from './elle'
 
 import { A, type PoseRef } from '../art/anims'
 import { VIEW_H, VIEW_W } from '../config'
@@ -147,6 +147,14 @@ export interface Puppet {
   facing: number
   squash: number
   extraRot: number
+  /** A roll about the middle of the body (extraRot leans it about the feet). */
+  spin: number
+  /** 0..1: the weapon is lowered onto the floor instead of following the hand below it (kneeling bodies) */
+  rest: number
+  /** The body is drawn left-right mirrored, so the weapon is in its other hand. */
+  mirror: boolean
+  /** The weapon is held blade-down from the fist. */
+  reverseGrip: boolean
   heightPx: number
   widthPx: number
   apply(p: PoseRef): void
@@ -154,10 +162,14 @@ export interface Puppet {
   wx(v: number): number
   wy(v: number): number
   setFlash(color: number | null): void
-  setTintMul(color: number): void
+  setTintMul(color: number, power?: number): void
+  /** A glow along the silhouette, for bodies that carry their own light (only the hero does). */
+  setRim(color: number, power: number): void
   setAlpha(a: number): void
   setVisible(v: boolean): void
   ghost(color: number, alpha: number, life: number): void
+  /** Leave an afterimage in a given pose somewhere else; the body itself is re-posed on its next update. */
+  ghostAt(pose: PoseRef, x: number, y: number, facing: number, color: number, alpha: number, life: number): void
   destroy(): void
 }
 
@@ -199,6 +211,29 @@ export class Stage3D {
   private characters: Record<string, THREE.Object3D> = {}
   canvas!: HTMLCanvasElement
   private ghosts: GhostBody[] = []
+  /**
+   * The tactical view of the overload charge: the same bodies seen from high above in perspective, standing on
+   * a grid of light, each enemy marked by a cross. `k` runs 0 (the ordinary side view) to 1 (fully overhead).
+   */
+  private top = { k: 0, x: 0, ground: 0, l: 0, r: 0 }
+  private overhead = new THREE.PerspectiveCamera(30, VIEW_W / VIEW_H, 10, 60000)
+  private grid: THREE.LineSegments | null = null
+  private gridSpan = ''
+  private crosses: THREE.Group[] = []
+  private crossMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff5fd0,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+  private heroMaterial = new THREE.MeshBasicMaterial({
+    color: 0x6fd8ff,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+  /** The hero's floor light. It falls off with distance, so legs catch more of it than heads. */
+  private foot = new THREE.PointLight(0x3d9cff, 0, 640, 1)
   private ghostPool: Record<string, GhostBody[]> = {}
   bodies = new Set<Body3D>()
 
@@ -247,6 +282,7 @@ export class Stage3D {
     const rimB = new THREE.DirectionalLight(0xff4fc8, 3.2)
     rimB.position.set(500, 150, -500)
     s.scene.add(rimB)
+    s.scene.add(s.foot)
     s.cam.position.z = 2000
     Stage3D.I = s
     return s
@@ -277,7 +313,120 @@ export class Stage3D {
     c.position.x = cx
     c.position.y = -cy
     c.updateProjectionMatrix()
-    this.renderer.render(this.scene, c)
+    const top = this.top
+    if (top.k <= 0.001) {
+      this.renderer.render(this.scene, c)
+      return
+    }
+    // Swing from a long-lens view that matches the side view up to a wide one looking down on the floor.
+    const s = top.k * top.k * (3 - 2 * top.k),
+      o = this.overhead,
+      rad = Math.PI / 180,
+      fov = 6 + (36 - 6) * s,
+      level = VIEW_H / 2 / zoom / Math.tan((6 * rad) / 2),
+      above = Math.max(1000, (top.r - top.l) / 2 + 200) / (Math.tan((36 * rad) / 2) * (VIEW_W / VIEW_H)),
+      distance = level + (above - level) * s,
+      pitch = 60 * rad * s,
+      tx = cx + (top.x - cx) * s,
+      ty = -cy + (-top.ground + 70 + cy) * s
+    o.fov = fov
+    o.position.set(tx, ty + Math.sin(pitch) * distance, Math.cos(pitch) * distance)
+    o.lookAt(tx, ty, 0)
+    o.updateProjectionMatrix()
+    this.renderer.render(this.scene, o)
+  }
+
+  /**
+   * Open or close the tactical view. `marks` are the points to cross-mark on the floor (world px); the first
+   * one flagged `hero` gets a ring instead.
+   */
+  setTop(k: number, x: number, ground: number, l: number, r: number, marks: { x: number; hero?: boolean }[]) {
+    const top = this.top
+    top.k = k
+    top.x = x
+    top.ground = ground
+    top.l = l
+    top.r = r
+    const on = k > 0.001,
+      span = `${l}:${r}:${ground}`
+    if (on && this.gridSpan !== span) {
+      // a floor of light under the fight: lines every 100 px, the fighting line itself brighter
+      this.gridSpan = span
+      if (this.grid) {
+        this.scene.remove(this.grid)
+        this.grid.geometry.dispose()
+      }
+      const points: number[] = [],
+        colors: number[] = [],
+        x0 = Math.floor((l - 300) / 100) * 100,
+        x1 = Math.ceil((r + 300) / 100) * 100,
+        z0 = -900,
+        z1 = 700,
+        line = (ax: number, az: number, bx: number, bz: number, bright: number) => {
+          points.push(ax, -ground, az, bx, -ground, bz)
+          for (let i = 0; i < 2; i++) colors.push(0.18 * bright, 0.42 * bright, 1 * bright)
+        }
+      for (let gx = x0; gx <= x1; gx += 100) line(gx, z0, gx, z1, gx % 500 === 0 ? 0.55 : 0.28)
+      for (let gz = z0; gz <= z1; gz += 100) line(x0, gz, x1, gz, gz === 0 ? 1.3 : 0.28)
+      const geometry = new THREE.BufferGeometry()
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3))
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+      this.grid = new THREE.LineSegments(
+        geometry,
+        new THREE.LineBasicMaterial({
+          vertexColors: true,
+          transparent: true,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      )
+      this.grid.frustumCulled = false
+      this.scene.add(this.grid)
+    }
+    if (this.grid) {
+      this.grid.visible = on
+      ;(this.grid.material as THREE.LineBasicMaterial).opacity = k
+    }
+    this.crossMaterial.opacity = this.heroMaterial.opacity = k
+    for (let i = 0; i < Math.max(marks.length, this.crosses.length); i++) {
+      const mark = on ? marks[i] : undefined
+      let cross = this.crosses[i]
+      if (!mark) {
+        if (cross) cross.visible = false
+        continue
+      }
+      if (!cross) {
+        cross = new THREE.Group()
+        const bar = (w: number, h: number, d: number, y = 0) => {
+          const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), this.crossMaterial)
+          mesh.position.y = y
+          mesh.frustumCulled = false
+          cross.add(mesh)
+        }
+        // two bars lying crossed on the floor, and a thin beam standing on their centre
+        bar(340, 5, 9)
+        bar(9, 5, 340)
+        bar(5, 300, 5, 150)
+        this.crosses[i] = cross
+        this.scene.add(cross)
+      }
+      cross.visible = true
+      cross.position.set(mark.x, -ground + 3, 0)
+      for (const mesh of cross.children)
+        (mesh as THREE.Mesh).material = mark.hero ? this.heroMaterial : this.crossMaterial
+      // the hero's mark is a tight diamond rather than a wide cross
+      cross.rotation.y = mark.hero ? Math.PI / 4 : 0
+      cross.scale.setScalar(mark.hero ? 0.45 : 1)
+    }
+  }
+
+  /** Place the hero's floor light at a point on the ground (world px); it lights every nearby body from below. */
+  setFootLight(x: number, y: number, strength: number, color: number) {
+    // slightly above the floor and toward the camera, so surfaces facing the viewer catch it
+    this.foot.position.set(x, -y + 12, 170)
+    this.foot.color.setHex(color)
+    // intensity is quoted at the light's own distance from the feet
+    this.foot.intensity = strength * 170
   }
 
   /* ----------------------------- afterimages ----------------------------- */
@@ -343,6 +492,7 @@ export class Stage3D {
 
   /** Drop everything a finished scene left behind. */
   reset() {
+    this.setTop(0, 0, 0, 0, 0, [])
     for (const b of [...this.bodies]) b.destroy()
     for (const g of [...this.ghosts, ...Object.values(this.ghostPool).flat()]) {
       this.scene.remove(g.root)
@@ -355,7 +505,12 @@ export class Stage3D {
   }
 }
 
-const tmp = new THREE.Vector3()
+const tmp = new THREE.Vector3(),
+  tmpB = new THREE.Vector3(),
+  tmpC = new THREE.Vector3(),
+  swing = new THREE.Quaternion(),
+  frame = new THREE.Quaternion(),
+  frameInverse = new THREE.Quaternion()
 
 export class Body3D implements Puppet {
   root: THREE.Object3D
@@ -370,6 +525,10 @@ export class Body3D implements Puppet {
   facing = 1
   squash = 0
   extraRot = 0
+  spin = 0
+  rest = 0
+  mirror = false
+  reverseGrip = false
   heightPx: number
   widthPx: number
   private mixer: THREE.AnimationMixer
@@ -386,6 +545,8 @@ export class Body3D implements Puppet {
   private S: number
   private flashOn = false
   private tintOn = 0
+  private tintPower = 0
+  private rim: RimLight | null = null
   private stage = Stage3D.I
   private active: string[] = []
 
@@ -398,6 +559,7 @@ export class Body3D implements Puppet {
     this.widthPx = skin.height * 0.29 * (skin.wide ?? 1)
     this.S = skin.height / MODEL_H
     this.root = this.stage.cloneCharacter(skinKey)
+    if (skin.base === 'Elle') this.rim = { color: { value: new THREE.Color(0x5fb0ff) }, power: { value: 0 } }
     const instances = new Map<THREE.Material, THREE.Material>()
     this.root.traverse((o) => {
       if ((o as THREE.Bone).isBone) this.bones.push(o as THREE.Bone)
@@ -408,7 +570,7 @@ export class Body3D implements Puppet {
       const mapped = source.map((material) => {
         if (!instances.has(material)) {
           const instance = material.clone()
-          styleElleMaterial(instance)
+          styleElleMaterial(instance, this.rim)
           instances.set(material, instance)
         }
         return instances.get(material)!
@@ -469,7 +631,46 @@ export class Body3D implements Puppet {
       this.active.push(p.prev)
     } else a.setEffectiveWeight(1)
     this.mixer.update(0)
+    this.restWeapon()
     this.measure()
+  }
+
+  /**
+   * A kneeling pose points the weapon hand at the ground, which would push a long weapon through the floor.
+   * Swing it up in its own vertical plane until the head lies on the floor, as if the body were leaning on it.
+   */
+  private restWeapon() {
+    const weapon = this.weapon
+    if (this.reverseGrip) weapon.quaternion.copy(REVERSE_GRIP)
+    else weapon.quaternion.identity()
+    if (this.rest <= 0) return
+    this.root.updateMatrixWorld(true)
+    this.handBone.getWorldQuaternion(frame)
+    frameInverse.copy(frame).invert()
+    const hand = this.handBone.getWorldPosition(tmp),
+      // keep the head on the floor, not half inside it
+      floor = this.root.position.y + this.heightPx * 0.05
+    // The body is scaled unevenly, so one swing lands close; a second and third settle it.
+    for (let pass = 0; pass < 3; pass++) {
+      const shaft = this.tipObj.getWorldPosition(tmpB).sub(hand),
+        length = shaft.length(),
+        drop = Math.max(-length * 0.98, floor - hand.y),
+        error = hand.y + shaft.y - floor
+      if (drop >= 0 || (pass === 0 && error >= 0)) break
+      if (Math.abs(error) < 1) break
+      const flat = Math.hypot(shaft.x, shaft.z) || 1e-6,
+        reach = Math.sqrt(length * length - drop * drop)
+      tmpC.set((shaft.x / flat) * reach, drop, (shaft.z / flat) * reach).normalize()
+      // express the world-space swing in the hand's frame, where the weapon lives
+      swing.setFromUnitVectors(shaft.normalize(), tmpC).premultiply(frameInverse).multiply(frame)
+      weapon.quaternion.premultiply(swing)
+      weapon.updateMatrixWorld(true)
+    }
+    if (this.rest < 1) {
+      swing.copy(weapon.quaternion)
+      weapon.quaternion.identity().slerp(swing, this.rest)
+      weapon.updateMatrixWorld(true)
+    }
   }
 
   private measure() {
@@ -489,11 +690,19 @@ export class Body3D implements Puppet {
   private applyTransform() {
     const w = this.skin.wide ?? 1,
       S = this.S
-    this.root.position.x = this.x
-    this.root.position.y = -this.y
+    // A lean turns the body about its feet. A spin must turn it about its middle, so the feet are moved to
+    // keep that point where the lean alone would have put it.
+    const turn = this.extraRot + this.spin,
+      mid = this.heightPx * 0.5
+    this.root.position.x = this.x + mid * (Math.sin(this.extraRot) - Math.sin(turn))
+    this.root.position.y = -this.y + mid * (Math.cos(this.extraRot) - Math.cos(turn))
     this.root.rotation.set(0, this.facing > 0 ? TURN : -TURN, 0)
-    this.root.rotateOnWorldAxis(Z, -this.extraRot)
-    this.root.scale.set(S * w * (1 - this.squash * 0.6), S * (1 + this.squash), S * w * (1 - this.squash * 0.6))
+    this.root.rotateOnWorldAxis(Z, -turn)
+    this.root.scale.set(
+      S * w * (1 - this.squash * 0.6) * (this.mirror ? -1 : 1),
+      S * (1 + this.squash),
+      S * w * (1 - this.squash * 0.6)
+    )
   }
 
   setPos(x: number, y: number, facing: number) {
@@ -521,10 +730,11 @@ export class Body3D implements Puppet {
       m.emissiveIntensity = on ? 1.4 : base.power
     }
   }
-  /** A soft self-illumination used for "dying" and "empowered" states. */
-  setTintMul(color: number) {
-    if (this.tintOn === color) return
+  /** Self-illumination of the unlit surfaces, used for "dying" and "empowered" states. */
+  setTintMul(color: number, power = 0.1) {
+    if (this.tintOn === color && this.tintPower === power) return
     this.tintOn = color
+    this.tintPower = power
     this.flashOn = false
     for (const m of this.mats) {
       const base = this.emissions.get(m)!
@@ -533,9 +743,14 @@ export class Body3D implements Puppet {
         m.emissiveIntensity = base.power
       } else {
         m.emissive.setHex(color)
-        m.emissiveIntensity = 0.1
+        m.emissiveIntensity = power
       }
     }
+  }
+  setRim(color: number, power: number) {
+    if (!this.rim) return
+    this.rim.color.value.setHex(color)
+    this.rim.power.value = power
   }
   setAlpha(a: number) {
     if (a === this.alpha) return
@@ -556,6 +771,16 @@ export class Body3D implements Puppet {
   ghost(color: number, alpha: number, life: number) {
     this.stage.spawnGhost(this, color, alpha, life)
   }
+  ghostAt(pose: PoseRef, x: number, y: number, facing: number, color: number, alpha: number, life: number) {
+    const mirror = this.mirror,
+      grip = this.reverseGrip
+    this.mirror = this.reverseGrip = false
+    this.setPos(x, y, facing)
+    this.apply(pose)
+    this.stage.spawnGhost(this, color, alpha, life)
+    this.mirror = mirror
+    this.reverseGrip = grip
+  }
   destroy() {
     this.stage.scene.remove(this.root)
     this.stage.bodies.delete(this)
@@ -568,4 +793,5 @@ export class Body3D implements Puppet {
   }
 }
 const Z = new THREE.Vector3(0, 0, 1)
+const REVERSE_GRIP = new THREE.Quaternion().setFromAxisAngle(Z, Math.PI)
 const FLASH_COLOR = new THREE.Color(0xffffff)

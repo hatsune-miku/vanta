@@ -1,0 +1,60 @@
+{
+  "collectedOn": "2026-11-14",
+  "note": "All from Poly Haven (polyhaven.com), CC0. The panoramas are 8k tonemapped JPGs; only the band around the horizon of each is kept here, at full width (it wraps seamlessly). `node tools/pack-backdrop.mjs` grades these daylight photographs into the night layers in public/backdrop/.",
+  "license": "CC0-1.0",
+  "files": {
+    "plant_mid.jpg": {
+      "asset": "Peppermint Powerplant",
+      "authors": "Andreas Mischok",
+      "page": "https://polyhaven.com/a/peppermint_powerplant",
+      "download": "https://dl.polyhaven.org/file/ph-assets/HDRIs/extra/Tonemapped%20JPG/peppermint_powerplant.jpg",
+      "crop": "rows 20%-54% of the 8192x4096 panorama, full width",
+      "use": "the plant floor behind the fight (mid layer)"
+    },
+    "column.jpg": {
+      "asset": "Peppermint Powerplant",
+      "page": "https://polyhaven.com/a/peppermint_powerplant",
+      "crop": "x 5912-6200, y 610-2510 of the same panorama: one riveted steel column",
+      "use": "the columns of the near layer",
+      "authors": "Andreas Mischok"
+    },
+    "plant_far.jpg": {
+      "asset": "Peppermint Powerplant 2",
+      "page": "https://polyhaven.com/a/peppermint_powerplant_2",
+      "download": "https://dl.polyhaven.org/file/ph-assets/HDRIs/extra/Tonemapped%20JPG/peppermint_powerplant_2.jpg",
+      "crop": "rows 16%-52% of the 8192x4096 panorama, full width",
+      "use": "the turbine hall seen through haze (far layer)",
+      "authors": "Andreas Mischok"
+    },
+    "floor.jpg": {
+      "asset": "Metal Plate",
+      "page": "https://polyhaven.com/a/metal_plate",
+      "download": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/metal_plate/metal_plate_diff_2k.jpg",
+      "use": "the deck",
+      "authors": "Rob Tuytel"
+    },
+    "yard/sky.jpg": {
+      "asset": "Industrial Sunset (Pure Sky)",
+      "authors": "Sergej Majboroda (original), Jarod Guest (sky edits)",
+      "page": "https://polyhaven.com/a/industrial_sunset_puresky",
+      "download": "https://dl.polyhaven.org/file/ph-assets/HDRIs/extra/Tonemapped%20JPG/industrial_sunset_puresky.jpg",
+      "crop": "rows 14%-51% of the 8192x4096 panorama, full width",
+      "use": "stage 2: the dusk sky (far layer)"
+    },
+    "yard/skyline.jpg": {
+      "asset": "Abandoned Tank Farm 03",
+      "authors": "Sergej Majboroda",
+      "page": "https://polyhaven.com/a/abandoned_tank_farm_03",
+      "download": "https://dl.polyhaven.org/file/ph-assets/HDRIs/extra/Tonemapped%20JPG/abandoned_tank_farm_03.jpg",
+      "crop": "rows 40%-53.5% of the 8192x4096 panorama, full width; its daylight sky is keyed out when packing",
+      "use": "stage 2: the sheds and trees as silhouettes (mid layer)"
+    },
+    "yard/floor.jpg": {
+      "asset": "Concrete Floor Worn 001",
+      "authors": "Dimitrios Savva (photography), Rico Cilliers (processing)",
+      "page": "https://polyhaven.com/a/concrete_floor_worn_001",
+      "download": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/concrete_floor_worn_001/concrete_floor_worn_001_diff_2k.jpg",
+      "use": "stage 2: the ground"
+    }
+  }
+}
