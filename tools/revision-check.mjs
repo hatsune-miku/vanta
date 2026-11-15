@@ -872,6 +872,277 @@ export default async (g) => {
       { lives: arbiter.lives, enemies: b.enemies.map((e) => e.kind) }
     )
 
+    // ---- as a KOOK mini-game: the load result is reported the way the SDK asks, against a stand-in host
+    const { Kook, kook: kookLive } = await import('/src/core/kook.ts')
+    const kkWait = (ms = 30) => new Promise((done) => setTimeout(done, ms))
+    function kkHost({
+      capabilities = ['lifecycle.reportLoadResult', 'lifecycle.onStateChanged'],
+      refuse = 0,
+      answer = 'authorized',
+    } = {}) {
+      const calls = [],
+        // `answer`: what the player (or the host) does with an authorisation request; `asked`: the requests made
+        host = { epoch: 1, connection: null, lifecycle: null, auth: null, refuse, answer, asked: [] }
+      const client = {
+        onConnectionChanged(listener) {
+          host.connection = listener
+          listener({ state: 'idle', epoch: 0, reason: null })
+          return () => {}
+        },
+        ready() {
+          calls.push('ready')
+          return Promise.resolve({}).then((value) => {
+            host.connection({ state: 'connected', epoch: host.epoch, reason: null })
+            return value
+          })
+        },
+        hasCapability: (name) => capabilities.includes(name),
+        session: {
+          get(input) {
+            host.asked.push(input)
+            if (host.answer === 'error') return Promise.reject({ code: 'REQUEST_TIMEOUT' })
+            if (host.answer === 'cancelled') return Promise.resolve({ status: 'cancelled', state: input.state })
+            return Promise.resolve({
+              status: 'authorized',
+              code: 'one-time-code',
+              state: host.answer === 'forged' ? 'f'.repeat(32) : input.state,
+              expiresAt: Date.now() + 60000,
+              scopes: input.scopes,
+              revision: 1,
+            })
+          },
+        },
+        auth: {
+          onStateChanged(listener) {
+            host.auth = listener
+            return Promise.resolve({ unsubscribe: async () => {} })
+          },
+        },
+        lifecycle: {
+          reportLoadResult(input) {
+            calls.push(JSON.stringify(input))
+            return host.refuse-- > 0 ? Promise.reject({ code: 'NOT_READY' }) : Promise.resolve()
+          },
+          onStateChanged(listener) {
+            host.lifecycle = listener
+            return Promise.resolve({ unsubscribe: async () => {} })
+          },
+        },
+        destroy() {
+          calls.push('destroy')
+        },
+      }
+      return { calls, host, load: () => Promise.resolve({ createKookClient: () => client }) }
+    }
+    const KK_LOADED = '{"status":"loaded"}'
+    check(
+      'opened on its own the game is not a KOOK session and asks for no SDK',
+      kookLive.state === 'standalone' && !kookLive.framed
+    )
+    // the title is up before KOOK answers: the report waits for ready()
+    let kkFake = kkHost(),
+      kkSession = new Kook()
+    kkSession.loadResult(true)
+    kkSession.start(kkFake.load, true)
+    await kkWait()
+    check(
+      'ready() comes first, then one "loaded" report',
+      kkSession.state === 'ready' && JSON.stringify(kkFake.calls) === JSON.stringify(['ready', KK_LOADED]),
+      kkFake.calls
+    )
+    // KOOK answers before the title is up: nothing is reported until the game can be played
+    kkFake = kkHost()
+    kkSession = new Kook()
+    kkSession.start(kkFake.load, true)
+    await kkWait()
+    const kkEarly = kkFake.calls.length
+    kkSession.loadResult(true)
+    kkSession.loadResult(false)
+    await kkWait()
+    check(
+      'nothing is reported before the game is playable, and the first result is the only one sent',
+      kkEarly === 1 && JSON.stringify(kkFake.calls) === JSON.stringify(['ready', KK_LOADED]),
+      kkFake.calls
+    )
+    kkFake = kkHost()
+    kkSession = new Kook()
+    kkSession.start(kkFake.load, true)
+    kkSession.loadResult(false)
+    await kkWait()
+    check(
+      'a failed load is reported as failed, with the resource reason code',
+      kkFake.calls[1] === '{"status":"failed","reasonCode":"game_resource_failed"}' && kkFake.calls.length === 2,
+      kkFake.calls
+    )
+    kkFake = kkHost({ capabilities: [] })
+    kkSession = new Kook()
+    kkSession.start(kkFake.load, true)
+    kkSession.loadResult(true)
+    await kkWait()
+    check(
+      'a host without the capability is not sent a load result',
+      JSON.stringify(kkFake.calls) === '["ready"]',
+      kkFake.calls
+    )
+    // the SDK never replays this write: a report the host did not take is sent again
+    kkFake = kkHost({ refuse: 2 })
+    kkSession = new Kook()
+    kkSession.retryMs = 10
+    kkSession.start(kkFake.load, true)
+    kkSession.loadResult(true)
+    await kkWait(120)
+    check(
+      'a report the host did not take is sent again until it is taken',
+      JSON.stringify(kkFake.calls) === JSON.stringify(['ready', KK_LOADED, KK_LOADED, KK_LOADED]),
+      kkFake.calls
+    )
+    // a recovered connection: ready() again, and the same result again (the host merges repeats)
+    kkFake.host.epoch = 2
+    kkFake.host.connection({ state: 'recovering', epoch: 1, reason: null })
+    kkFake.host.connection({ state: 'connected', epoch: 2, reason: null })
+    await kkWait(60)
+    check(
+      'after a recovered connection it calls ready() once more and reports the same result again',
+      JSON.stringify(kkFake.calls.slice(4)) === JSON.stringify(['ready', KK_LOADED]) && kkSession.state === 'ready',
+      kkFake.calls
+    )
+    let kkClosed = 0,
+      kkHidden = null
+    kkSession.onClosed = () => kkClosed++
+    kkSession.onVisibility = (hidden) => (kkHidden = hidden)
+    kkFake.host.lifecycle({ revision: 1, visibility: 'hidden', presentation: 'embedded', status: 'active' })
+    const kkHid = kkHidden
+    kkFake.host.lifecycle({
+      revision: 2,
+      visibility: 'hidden',
+      presentation: 'embedded',
+      status: 'closed',
+      reason: 'host_closed',
+    })
+    check(
+      'the host hiding the game and the host closing it both reach the game',
+      kkHid === true && kkClosed === 1 && kkSession.state === 'closed'
+    )
+    // framed by something that is not KOOK: the SDK finds no host, and that is not an error for the player
+    kkSession = new Kook()
+    kkSession.start(
+      () =>
+        Promise.resolve({
+          createKookClient: () => ({
+            onConnectionChanged: () => () => {},
+            ready: () => Promise.reject({ code: 'BOOTSTRAP_TIMEOUT' }),
+            destroy() {},
+          }),
+        }),
+      true
+    )
+    kkSession.loadResult(true)
+    await kkWait()
+    check(
+      'with no KOOK host the session is simply unavailable',
+      kkSession.state === 'unavailable' && kkSession.reason === 'BOOTSTRAP_TIMEOUT' && !kkSession.can('lifecycle.leave')
+    )
+    const kkNoHost = await kkSession.authorize(),
+      kkAlone = await kookLive.authorize()
+    check(
+      'outside KOOK no authorisation is ever asked for',
+      kkNoHost === 'none' && kkAlone === 'none' && kookLive.auth === 'none',
+      { kkNoHost, kkAlone }
+    )
+
+    // ---- signing in: session.get() with get_user_info, once, and the game goes on whatever the answer
+    const kkAuthCaps = ['lifecycle.reportLoadResult', 'lifecycle.onStateChanged', 'auth.onStateChanged']
+    kkFake = kkHost({ capabilities: kkAuthCaps })
+    kkSession = new Kook()
+    kkSession.start(kkFake.load, true)
+    await kkWait()
+    const kkBefore = kkFake.host.asked.length,
+      kkPair = [kkSession.authorize(), kkSession.authorize()],
+      kkWhile = kkSession.auth,
+      kkGranted = await Promise.all(kkPair),
+      kkAsk = kkFake.host.asked[0] ?? {}
+    check(
+      'connecting does not ask for authorisation by itself',
+      kkBefore === 0 && kkFake.calls.join() === 'ready',
+      kkFake.calls
+    )
+    check(
+      'signing in is one session.get() for get_user_info, with a fresh 128-bit state and the default callback',
+      kkFake.host.asked.length === 1 &&
+        JSON.stringify(kkAsk.scopes) === '["get_user_info"]' &&
+        /^[0-9a-f]{32}$/.test(kkAsk.state) &&
+        !('redirectUri' in kkAsk) &&
+        kkWhile === 'asking' &&
+        kkGranted.join() === 'authorized,authorized' &&
+        kkSession.auth === 'authorized',
+      { asked: kkFake.host.asked, kkWhile, kkGranted }
+    )
+    await kkSession.authorize()
+    check(
+      'an authorisation already given is not asked for again, and its one-time code is not kept',
+      kkFake.host.asked.length === 1 && !Object.values(kkSession).some((value) => value === 'one-time-code'),
+      kkFake.host.asked.length
+    )
+    kkFake = kkHost({ capabilities: kkAuthCaps, answer: 'cancelled' })
+    kkSession = new Kook()
+    kkSession.start(kkFake.load, true)
+    await kkWait()
+    const kkDeclined = await kkSession.authorize()
+    kkFake.host.answer = 'authorized'
+    const kkRetried = await kkSession.authorize()
+    check(
+      'declining is an ordinary answer; asking again is a new request with a new state',
+      kkDeclined === 'cancelled' &&
+        kkRetried === 'authorized' &&
+        kkFake.host.asked.length === 2 &&
+        kkFake.host.asked[0].state !== kkFake.host.asked[1].state &&
+        kkSession.state === 'ready',
+      { kkDeclined, kkRetried }
+    )
+    kkFake = kkHost({ capabilities: kkAuthCaps, answer: 'error' })
+    kkSession = new Kook()
+    kkSession.start(kkFake.load, true)
+    await kkWait()
+    const kkErrored = await kkSession.authorize()
+    kkFake.host.answer = 'forged'
+    const kkForged = await kkSession.authorize()
+    check(
+      'a request the host could not complete, or an answer for another request, counts as failed and nothing more',
+      kkErrored === 'failed' && kkForged === 'failed' && kkSession.auth === 'failed' && kkSession.state === 'ready',
+      { kkErrored, kkForged }
+    )
+    kkFake.host.auth({ revision: 5, status: 'revoked' })
+    const kkRevoked = await kkSession.authorize()
+    check(
+      'once the player revokes the authorisation it is not asked for again in this launch',
+      kkRevoked === 'revoked' && kkFake.host.asked.length === 2,
+      { kkRevoked, asked: kkFake.host.asked.length }
+    )
+    // pressed before KOOK has answered the handshake: the request goes out once it has
+    kkFake = kkHost({ capabilities: kkAuthCaps })
+    kkSession = new Kook()
+    kkSession.start(kkFake.load, true)
+    const kkEager = kkSession.authorize(),
+      kkEagerAsked = kkFake.host.asked.length
+    check(
+      'a press during the handshake asks as soon as KOOK is ready',
+      kkEagerAsked === 0 && (await kkEager) === 'authorized' && kkFake.host.asked.length === 1,
+      { kkEagerAsked, asked: kkFake.host.asked.length }
+    )
+    // a consent the host already holds is reported without a request, and the sign-in call is still made
+    kkFake = kkHost({ capabilities: kkAuthCaps })
+    kkSession = new Kook()
+    kkSession.start(kkFake.load, true)
+    await kkWait()
+    kkFake.host.auth({ revision: 1, status: 'authorized', scopes: ['get_user_info'] })
+    const kkHeld = kkSession.auth
+    await kkSession.authorize()
+    check(
+      "the host's own word on a standing consent is followed, and signing in still goes through session.get()",
+      kkHeld === 'authorized' && kkFake.host.asked.length === 1 && kkSession.auth === 'authorized',
+      { kkHeld, asked: kkFake.host.asked.length }
+    )
+
     const originalAudio = window.AudioContext,
       originalElement = window.Audio
     let audioContexts = 0

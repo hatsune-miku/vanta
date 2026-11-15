@@ -82,7 +82,9 @@ try {
     assert.equal(state.count, 1, 'only the selected skill keeps a decoder')
     assert.equal(state.frame, frozenFrame, 'video playback does not advance the paused fight')
     assert.deepEqual(state.overflow, [], 'skill details fit below the recording')
-    if (['heavy', 'verdict', 'plunge'].includes(id)) await page.screenshot({ path: `tools/out/skills-${id}.png` })
+    // a software-rendered machine can take minutes over one capture
+    if (['heavy', 'verdict', 'plunge'].includes(id))
+      await page.screenshot({ path: `tools/out/skills-${id}.png`, timeout: 300000 })
     console.log('decoded and displayed', id, state.duration)
   }
   await page.keyboard.press('Enter')

@@ -174,7 +174,10 @@ try {
     assert.ok(creditText.includes(name), `the credits page names ${name}`)
   assert.equal(await credits.locator('a[href="https://creativecommons.org/licenses/by/4.0/"]').count(), 2)
   assert.equal(await credits.locator('a[href="./"]').count(), 0, 'the credits page has no link back into a second game')
-  await credits.screenshot({ path: 'tools/out/credits.png', timeout: 120000 })
+  // the picture is only a record: a headless browser busy with the game sometimes cannot take it
+  await credits
+    .screenshot({ path: 'tools/out/credits.png', timeout: 120000 })
+    .catch((error) => console.log('credits page capture skipped:', String(error.message).split('\n')[0]))
   await credits.close()
   await page.bringToFront()
   assert.equal(
@@ -428,8 +431,44 @@ try {
   })
   await execPage.goto(baseUrl)
   await execPage.waitForFunction(() => window.__game?.scene.isActive('Title'), null, { timeout: 120000 })
+  // As a KOOK session (a stand-in host that offers nothing else): the press that leaves the title is the sign-in.
+  await execPage.evaluate(() => {
+    const session = window.__kook
+    window.__asked = []
+    session.client = {
+      hasCapability: () => false,
+      session: {
+        get: (input) =>
+          new Promise((resolve) => {
+            window.__asked.push(input)
+            window.__answer = () => resolve({ status: 'cancelled', state: input.state })
+          }),
+      },
+    }
+    session.state = 'ready'
+  })
   await execPage.keyboard.press('Space')
+  await execPage.waitForFunction(() => window.__asked.length > 0)
+  // let the game read that same press again before looking: it must not count as a second one
+  const titleFrame = await execPage.evaluate(() => window.__game.loop.frame)
+  await execPage.waitForFunction((f) => window.__game.loop.frame > f + 2, titleFrame, { timeout: 120000 })
+  const signIn = await execPage.evaluate(() => ({
+    asked: window.__asked,
+    auth: window.__kook.auth,
+    title: window.__game.scene.isActive('Title'),
+    battle: window.__game.scene.isActive('Battle'),
+  }))
+  assert.equal(signIn.asked.length, 1, 'one authorisation request from the press on the title')
+  assert.deepEqual(signIn.asked[0].scopes, ['get_user_info'])
+  assert.match(signIn.asked[0].state, /^[0-9a-f]{32}$/)
+  assert.ok(
+    signIn.auth === 'asking' && signIn.title && !signIn.battle,
+    `the title waits for the player's answer: ${JSON.stringify(signIn)}`
+  )
+  await execPage.evaluate(() => window.__answer())
   await execPage.waitForFunction(() => window.__game.scene.getScene('Battle')?.frame > 3)
+  assert.equal(await execPage.evaluate(() => window.__kook.auth), 'cancelled')
+  console.log('KOOK sign-in: asked once from the title press; the game starts after a declined authorisation')
   await execPage.evaluate(() => {
     const b = window.__game.scene.getScene('Battle'),
       p = b.player,

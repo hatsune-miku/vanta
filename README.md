@@ -159,25 +159,26 @@ VANTA_URL=https://vanta.vanillacake.cn node tools/live.mjs  # 公网操作回归
 
 - 游戏页面地址：`https://vanta.vanillacake.cn/`（HTTPS；站点没有禁止被嵌入的响应头，可以放进 KOOK 的 iframe）。
 - 游戏人数：固定为 1。游戏不使用邀请、参与者、频道成员等任何多人接口。
-- OAuth scope：不需要，留空即可。游戏从不调用 `session.get()`，不会弹出授权框，也不读取任何用户资料；如果后台要求至少填一项，填最小的 `get_user_info` 也不会被用到。
-- 不需要游戏后端，也不需要 `mini_game.context` 权限。
+- OAuth scope：只需要 `get_user_info`（`session.get()` 的默认项，也是最小的一项）。回调地址用宿主默认值（`https://www.kookapp.cn/oauth/mini-game/callback`），游戏没有传 `redirectUri`。
+- 不需要 `mini_game.context` 权限。游戏目前没有后端：`session.get()` 拿到的一次性授权码没有地方换码，游戏直接丢弃，不保存、不打日志、不外发，所以它仍然不知道玩家是谁。将来要显示昵称、做排行榜之类，需要加一个后端按 SDK 文档「游戏后端接入」换码，并改由后端签发 `state`。
 - 只信任 SDK 默认的 `https://www.kookapp.cn`，没有追加测试来源。要在 KOOK 提供的测试环境联调时，在 `createKookClient()` 里加 `allowedHostOrigins`（见 SDK 文档「测试环境配置」）。
 
 **游戏做了什么**
 
-- 页面一启动就创建客户端并 `ready()`，和资源加载同时进行；标题页可以操作时上报 `loaded`，资源加载失败时上报 `failed / game_resource_failed`（宿主在 ready 后只等 60 秒）。
+- 页面一启动就创建客户端并 `ready()`，和资源加载同时进行；`ready()` 成功且标题页可以操作之后，先检查 `lifecycle.reportLoadResult` 能力，再上报 `{ status: 'loaded' }`；资源加载失败时上报 `{ status: 'failed', reasonCode: 'game_resource_failed' }`（宿主在 ready 后只等 60 秒）。一次加载只报一种结果。SDK 不会替游戏重发这次写入，所以宿主没收下时游戏自己隔 1.5 秒重发（最多 4 次，遇到 `STATE_CONFLICT` 即停）；连接恢复后重新 `ready()` 并把同一结果再报一次（宿主会合并重复结果）。
+- 登录：标题页按下任意键（或点击）的那一下，直接在按键事件里调用 `session.get({ state, scopes: ['get_user_info'] })`。玩家以前同意过时宿主直接返回，否则弹出 KOOK 的授权框；玩家回答之后进入战斗，同意、取消、请求失败都一样能玩。每次启动只问一次，取消后不会反复弹框（下次打开游戏时再问）；授权框迟迟没有结果时，再按一次键可以不等它直接开始。`state` 是前端用 `crypto.getRandomValues` 生成的 128 位随机值，每次请求一个新的，返回值里的 `state` 对不上就当作失败。握手还没完成就按键的话游戏先开始，握手一完成再发这次请求。同时订阅 `auth.onStateChanged`，授权被撤销后不再发起请求；连接恢复后也不会自动重弹。
 - 宿主把游戏隐藏时：战斗定格（打开作战终端）、音乐暂停；重新显示后音乐恢复，由玩家按 Esc 继续。宿主关闭本局时停止音乐并定格。
-- 连接恢复（epoch 变化）后重新 `ready()` 一次；连接断开不影响继续玩，因为游戏里没有任何依赖 KOOK 的交互。
+- 连接恢复（epoch 变化）后重新 `ready()` 一次；连接断开不影响继续玩，因为玩法不依赖 KOOK 的任何返回值。
 - 页面卸载时 `destroy()`。
 - 作战终端里按宿主能力多出两行：「全屏」（`ui.requestFullscreen`，在按键事件里直接调用，符合"必须由用户点击触发"的要求）和「退出游戏」（`lifecycle.leave`；游戏没有存档或房间要清理，直接交给 KOOK 关闭）。宿主不支持的能力对应的行不出现。
 - 资源署名页在 KOOK 里通过 `ui.openExternalLink` 打开，保留 KOOK 的跳转提示。
 
 **独立运行**
 
-- 直接在浏览器打开时，页面不在任何框架里，根本不会下载 SDK（它被打成单独的文件，按需加载），`window.__kook.state` 为 `standalone`。此时终端里的「全屏」用的是浏览器自己的全屏，没有「退出游戏」。
-- 被 KOOK 以外的页面嵌入时，SDK 会因为找不到宿主而超时（约 10 秒，`BOOTSTRAP_TIMEOUT` 或 `UNSUPPORTED_ENVIRONMENT`），游戏不等它、照常可玩，状态记为 `unavailable`。
+- 直接在浏览器打开时，页面不在任何框架里，根本不会下载 SDK（它被打成单独的文件，按需加载），`window.__kook.state` 为 `standalone`。此时没有登录这一步，按键直接开始；终端里的「全屏」用的是浏览器自己的全屏，没有「退出游戏」。
+- 被 KOOK 以外的页面嵌入时，SDK 会因为找不到宿主而超时（约 10 秒，`BOOTSTRAP_TIMEOUT` 或 `UNSUPPORTED_ENVIRONMENT`），游戏不等它、照常可玩，状态记为 `unavailable`，也不会发起授权请求。
 
-**验证情况**：`pnpm test:live` 覆盖了「独立打开不加载 SDK」和「被非 KOOK 页面嵌入时照常可玩」两种情况。与真实 KOOK 客户端的握手、加载上报、隐藏／关闭、全屏和退出，这台机器上没有 KOOK 宿主可测，上线前需要在支持小游戏的 KOOK 客户端里按 SDK 文档的「接入检查」走一遍。
+**验证情况**：`pnpm test:revision` 用一个替身宿主把上报时序实际跑了一遍（先 ready 后上报、可玩之前不报、失败原因码、无此能力时不报、被拒后重发、恢复后重报、隐藏与关闭事件），也跑了登录的各种结果（同意、取消后重试、请求失败、`state` 不符、并发只发一次、握手完成前发起、撤销后不再发起、非 KOOK 环境不发起）；`pnpm test:live` 覆盖了「独立打开不加载 SDK」「被非 KOOK 页面嵌入时照常可玩」和「在 KOOK 里标题页按键先登录、回答后开始」三种情况（最后一种同样用替身宿主）。与真实 KOOK 客户端的握手、加载上报、授权弹框、隐藏／关闭、全屏和退出，这台机器上没有 KOOK 宿主可测，上线前需要在支持小游戏的 KOOK 客户端里按 SDK 文档的「接入检查」走一遍。
 
 ## 关卡
 

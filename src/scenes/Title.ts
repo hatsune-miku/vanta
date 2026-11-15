@@ -9,6 +9,9 @@ import { kook } from '../core/kook'
 export class Title extends Phaser.Scene {
   private bd!: Backdrop
   private gone = false
+  /** KOOK has been asked for the player's authorisation, and how many times input has been read since */
+  private asked = false
+  private polls = 0
   constructor() {
     super('Title')
   }
@@ -18,6 +21,7 @@ export class Title extends Phaser.Scene {
       return
     }
     this.gone = false
+    this.asked = false
     // the game can be played from here on: tell KOOK, when it is the one hosting, that loading succeeded
     kook.loadResult(true)
     shared.input.reset()
@@ -42,6 +46,24 @@ export class Title extends Phaser.Scene {
   }
   private startGame() {
     if (this.gone) return
+    // Inside KOOK the press that leaves this screen is also the sign-in: KOOK asks the player for their
+    // authorisation (or already has it) and the fight begins once they have answered, whatever the answer.
+    if (kook.state === 'ready') {
+      if (!this.asked) {
+        this.asked = true
+        this.polls = 0
+        shared.sfx.unlock()
+        void kook.authorize().then(() => this.enter())
+        return
+      }
+      // The press that asked is read once more with the next input poll: that is not a second press. A later one
+      // goes ahead without waiting for the answer.
+      if (kook.auth === 'asking' && this.polls < 2) return
+    } else if (kook.state === 'connecting') void kook.authorize()
+    this.enter()
+  }
+  private enter() {
+    if (this.gone) return
     this.gone = true
     shared.sfx.unlock()
     shared.sfx.play('ui')
@@ -54,6 +76,7 @@ export class Title extends Phaser.Scene {
   update(t: number) {
     if (!this.bd) return
     shared.input.poll()
+    if (this.asked) this.polls++
     if (shared.input.anyPressed) this.startGame()
     const time = t / 1000
     this.bd.update(this.cameras.main, time)
