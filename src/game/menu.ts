@@ -78,11 +78,13 @@ export const SKILLS: SkillInfo[] = [
 export type MenuTab = 'stage' | 'skills'
 /**
  * The rows of the stage screen after the stages themselves. Which of them appear depends on where the game is
- * running: fullscreen only where it can be had, leaving only inside KOOK.
+ * running: fullscreen only where it can be had; asking for KOOK's authorisation and leaving only inside KOOK.
  */
-export type MenuExtra = 'skills' | 'sound' | 'fullscreen' | 'credits' | 'leave'
+export type MenuExtra = 'skills' | 'sound' | 'fullscreen' | 'signin' | 'credits' | 'leave'
 export type MenuAction =
-  { type: 'close' } | { type: 'level'; index: number } | { type: 'sound' | 'fullscreen' | 'credits' | 'leave' }
+  | { type: 'close' }
+  | { type: 'level'; index: number }
+  | { type: 'sound' | 'fullscreen' | 'signin' | 'credits' | 'leave' }
 
 /**
  * The terminal: what Escape opens. The game stands still behind it. Its first screen lists the stages (choosing one

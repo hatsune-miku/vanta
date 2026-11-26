@@ -4,6 +4,7 @@ import { type Battle, LEVELS } from './Battle'
 
 import { COL, DISPLAY_FONT, VIEW_H, VIEW_W } from '../config'
 import { KEY_LABEL } from '../core/input'
+import { kook } from '../core/kook'
 import { clamp, damp, smooth } from '../core/util'
 import { type MenuExtra, SKILLS } from '../game/menu'
 import { OVERLOAD_DURATION, SHIELD_COST } from '../game/player'
@@ -355,6 +356,9 @@ export class Hud extends Phaser.Scene {
       .setFontFamily(DISPLAY_FONT)
       .setLetterSpacing(8)
     this.label(X + 230, Y + 60, '作战终端', 24, '#8fd6ff', k * 0.9).setLetterSpacing(6)
+    // inside a frame: where the KOOK session stands (connected or not, authorised or not, and why not)
+    const session = kook.statusLine
+    if (session) this.label(X + 410, Y + 61, session, 20, kook.auth === 'authorized' ? '#7dffb0' : '#ffd27d', k * 0.85)
     const tabs: [string, boolean][] = [
       ['关卡', m.tab === 'stage'],
       ['技能', m.tab === 'skills'],
@@ -396,6 +400,7 @@ export class Hud extends Phaser.Scene {
         skills: '技能',
         sound: `声音：${b.sfx.muted ? '关' : '开'}`,
         fullscreen: '全屏',
+        signin: 'KOOK 授权',
         credits: '资源署名',
         leave: '退出游戏',
       }
@@ -443,6 +448,10 @@ export class Hud extends Phaser.Scene {
             fullscreen: [
               '全屏',
               '确认后进入全屏；再次确认或按浏览器的 Esc 退出。在 KOOK 中由 KOOK 把游戏区域放到全屏。',
+            ],
+            signin: [
+              'KOOK 授权',
+              `${session}\n\n确认后向 KOOK 申请授权（读取你的基本资料）。不授权也可以正常游玩。`,
             ],
             credits: [
               '资源署名',

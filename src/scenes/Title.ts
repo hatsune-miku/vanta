@@ -46,9 +46,10 @@ export class Title extends Phaser.Scene {
   }
   private startGame() {
     if (this.gone) return
-    // Inside KOOK the press that leaves this screen is also the sign-in: KOOK asks the player for their
-    // authorisation (or already has it) and the fight begins once they have answered, whatever the answer.
-    if (kook.state === 'ready') {
+    // Inside KOOK the player is asked for their authorisation as soon as KOOK answers. If that is still open —
+    // the prompt is up, or the host did not take the request — this press settles it first: it waits for the
+    // answer, or asks once more from inside the press, and the fight begins whatever the answer.
+    if (kook.state === 'ready' && (kook.auth === 'asking' || kook.auth === 'failed' || kook.auth === 'none')) {
       if (!this.asked) {
         this.asked = true
         this.polls = 0
@@ -59,7 +60,7 @@ export class Title extends Phaser.Scene {
       // The press that asked is read once more with the next input poll: that is not a second press. A later one
       // goes ahead without waiting for the answer.
       if (kook.auth === 'asking' && this.polls < 2) return
-    } else if (kook.state === 'connecting') void kook.authorize()
+    }
     this.enter()
   }
   private enter() {

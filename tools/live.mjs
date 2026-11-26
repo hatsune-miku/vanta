@@ -441,7 +441,19 @@ try {
         get: (input) =>
           new Promise((resolve) => {
             window.__asked.push(input)
-            window.__answer = () => resolve({ status: 'cancelled', state: input.state })
+            window.__answer = (agree) =>
+              resolve(
+                agree
+                  ? {
+                      status: 'authorized',
+                      code: 'one-time-code',
+                      state: input.state,
+                      expiresAt: Date.now() + 60000,
+                      scopes: input.scopes,
+                      revision: 1,
+                    }
+                  : { status: 'cancelled', state: input.state }
+              )
           }),
       },
     }
@@ -465,10 +477,42 @@ try {
     signIn.auth === 'asking' && signIn.title && !signIn.battle,
     `the title waits for the player's answer: ${JSON.stringify(signIn)}`
   )
-  await execPage.evaluate(() => window.__answer())
+  await execPage.evaluate(() => window.__answer(false))
   await execPage.waitForFunction(() => window.__game.scene.getScene('Battle')?.frame > 3)
   assert.equal(await execPage.evaluate(() => window.__kook.auth), 'cancelled')
-  console.log('KOOK sign-in: asked once from the title press; the game starts after a declined authorisation')
+  // declined: the terminal says so, and keeps a row that asks again from the key press itself
+  await execPage.keyboard.press('Escape')
+  await execPage.waitForFunction(() => window.__game.scene.getScene('Battle').menu?.tab === 'stage')
+  const signInMenu = await execPage.evaluate(() => {
+    const b = window.__game.scene.getScene('Battle')
+    return { extras: b.menu.extras, row: b.menu.row, rows: b.menu.rows, line: window.__kook.statusLine }
+  })
+  assert.deepEqual(signInMenu.extras, ['skills', 'sound', 'signin', 'credits'])
+  assert.equal(signInMenu.line, 'KOOK · 已连接 · 授权已取消')
+  const signInRow = signInMenu.rows - signInMenu.extras.length + signInMenu.extras.indexOf('signin')
+  for (let i = signInMenu.row; i < signInRow; i++) {
+    await execPage.keyboard.press('KeyS')
+    await execPage.waitForFunction((want) => window.__game.scene.getScene('Battle').menu.row === want, i + 1)
+  }
+  await execPage.waitForFunction(
+    () =>
+      window.__game.scene
+        .getScene('Hud')
+        .menuTexts.some((t) => t.visible && t.text === 'KOOK · 已连接 · 授权已取消'),
+    null,
+    { timeout: 120000 }
+  )
+  await execPage.keyboard.press('Enter')
+  await execPage.waitForFunction(() => window.__asked.length === 2)
+  const menuFrame = await execPage.evaluate(() => window.__game.loop.frame)
+  await execPage.waitForFunction((f) => window.__game.loop.frame > f + 2, menuFrame, { timeout: 120000 })
+  assert.equal(await execPage.evaluate(() => window.__asked.length), 2, 'one new request from the terminal row')
+  await execPage.evaluate(() => window.__answer(true))
+  await execPage.waitForFunction(() => window.__kook.auth === 'authorized')
+  assert.equal(await execPage.evaluate(() => window.__kook.statusLine), 'KOOK · 已连接 · 已授权')
+  await execPage.keyboard.press('Escape')
+  await execPage.waitForFunction(() => !window.__game.scene.getScene('Battle').paused)
+  console.log('KOOK sign-in: asked from the title press, declined, asked again from the terminal and granted')
   await execPage.evaluate(() => {
     const b = window.__game.scene.getScene('Battle'),
       p = b.player,
@@ -539,7 +583,15 @@ try {
   assert.deepEqual(
     framedRows,
     ['skills', 'sound', 'credits'],
-    'framed by something other than KOOK there is no fullscreen or exit row to offer'
+    'framed by something other than KOOK there is no fullscreen, sign-in or exit row to offer'
+  )
+  await gameFrame.waitForFunction(
+    () =>
+      window.__game.scene
+        .getScene('Hud')
+        .menuTexts.some((t) => t.visible && /^KOOK · 未连接（[A-Z_]+）$/.test(t.text)),
+    null,
+    { timeout: 120000 }
   )
   console.log(`framed without KOOK: the game plays on its own (${session.reason})`)
   await hostPage.close()

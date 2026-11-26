@@ -525,6 +525,8 @@ export class Battle extends Phaser.Scene implements World, CineHost, TutorialHos
     }
     kook.wantsFullscreen = (event) =>
       this.menu?.extra === 'fullscreen' && ['Enter', 'NumpadEnter', 'Space'].includes(event.code)
+    kook.wantsSignIn = (event) =>
+      this.menu?.extra === 'signin' && ['Enter', 'NumpadEnter', 'Space'].includes(event.code)
     if (TEST_MODE) this.installTestHooks()
     this.draw(1, 0)
   }
@@ -586,6 +588,8 @@ export class Battle extends Phaser.Scene implements World, CineHost, TutorialHos
     // game is something only KOOK can do
     const extras: MenuExtra[] = ['skills', 'sound']
     if (kook.fullscreenOffered) extras.push('fullscreen')
+    // in KOOK, while the player's authorisation is not held: a row to ask for it again
+    if (kook.signInOffered) extras.push('signin')
     extras.push('credits')
     if (kook.can('lifecycle.leave')) extras.push('leave')
     this.menu = new Menu(tab, LEVELS.length, this.level, extras, tab === 'skills')
@@ -608,6 +612,7 @@ export class Battle extends Phaser.Scene implements World, CineHost, TutorialHos
       kook.openLink(new URL(import.meta.env.BASE_URL + 'credits.html', location.href).href)
     // a keyboard confirm has already gone fullscreen inside its own key event; this covers the gamepad
     else if (action.type === 'fullscreen') kook.fullscreen(false)
+    else if (action.type === 'signin') kook.signIn(false)
     else if (action.type === 'leave') {
       // nothing of the game's own to save or close: hand the exit to KOOK, which closes the page
       this.sfx.stopMusic()

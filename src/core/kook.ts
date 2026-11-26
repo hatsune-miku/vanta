@@ -1,4 +1,9 @@
-import type { KookCapability, KookClient } from '@kookapp/kook-minigame-sdk'
+import type {
+  KookAutoLaunchOptions,
+  KookCapability,
+  KookClient,
+  SessionCodeResult,
+} from '@kookapp/kook-minigame-sdk'
 
 import { TEST_MODE } from '../config'
 
@@ -35,12 +40,14 @@ function transaction() {
  * VANTA as a KOOK mini-game.
  *
  * It is a static, single-player game. It signs in the way KOOK mini-games do — `session.get()` with the
- * `get_user_info` scope, from the player's first press — and that is all it asks for: it sends no invitations and
- * queries no friends, members or participants. What it does, when it finds itself embedded in KOOK:
+ * `get_user_info` scope, by itself, once KOOK has answered and the game is loaded — and that is all it asks for:
+ * it sends no invitations and queries no friends, members or participants. What it does, when it finds itself
+ * embedded in KOOK (the same order as KOOK's own sample game):
  *
  *   - connects (`ready()`) as soon as the page starts, alongside its own loading
  *   - reports the load result once the title screen can be played, or that loading failed
- *   - asks for the player's authorisation once, on the press that leaves the title screen
+ *   - then asks for the player's authorisation, over the title screen; a request the host did not take is made
+ *     once more from the press that leaves the title screen, and the terminal keeps a row to ask again
  *   - pauses when the host hides it and stops when the host closes it
  *   - offers the host's fullscreen, exit and external-link handling where the host has them
  *   - destroys the client when the page goes away
@@ -49,7 +56,19 @@ function transaction() {
  * exactly as it does anywhere else.
  */
 /** fetches the SDK: the real one is a separate file downloaded on demand; a stand-in can be given instead */
-type SdkLoader = () => Promise<{ createKookClient: () => KookClient }>
+type SdkLoader = () => Promise<{ createKookClient: (options?: KookAutoLaunchOptions) => KookClient }>
+
+/**
+ * KOOK hosts to trust besides the SDK's own default (`https://www.kookapp.cn`): exact HTTPS origins, comma
+ * separated, fixed when the game is built (`VITE_KOOK_HOST_ORIGINS`). Needed only to run inside one of KOOK's
+ * test environments; a host that is not trusted is never answered, so the session would stay `unavailable`.
+ */
+const HOST_ORIGINS = String(import.meta.env.VITE_KOOK_HOST_ORIGINS ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean)
+/** every host this build answers to: the SDK keeps its default beside the ones added here */
+const TRUSTED = ['https://www.kookapp.cn', ...HOST_ORIGINS]
 
 export class Kook {
   state: KookState = 'standalone'
@@ -61,6 +80,8 @@ export class Kook {
   onClosed: (() => void) | null = null
   /** Asked from inside a real key or pointer event: return true to go fullscreen right there, in the handler. */
   wantsFullscreen: ((event: KeyboardEvent) => boolean) | null = null
+  /** The same, for asking KOOK for the player's authorisation again. */
+  wantsSignIn: ((event: KeyboardEvent) => boolean) | null = null
   private client: KookClient | null = null
   private usable: boolean | null = null
   /** the host has the load result (or has no use for one); a request for it is in flight; attempts so far */
@@ -70,10 +91,17 @@ export class Kook {
   /** how long to wait before sending a load result again after the host did not take it */
   retryMs = 1500
   private epoch = -1
+  /** a recovered connection is being read again: connection events seen meanwhile do not start another read */
+  private recovering = false
   private lastGesture = -1e9
+  private lastSignIn = -1e9
   auth: KookAuth = 'none'
+  /** why the last authorisation request did not go through, as the SDK's error code (shown in the terminal) */
+  authReason = ''
   /** `session.get()` has returned the player's agreement during this launch: it is not asked for twice */
   private obtained = false
+  /** the game has asked by itself once; any further request is the player's own doing */
+  private greeted = false
   /** the request in flight, if any, and the handshake it may have to wait for */
   private asking: Promise<KookAuth> | null = null
   private linked: Promise<void> = Promise.resolve()
@@ -86,57 +114,51 @@ export class Kook {
     // Only a framed page can be inside KOOK. Scripted runs and directly opened pages stop here.
     if (!always && (TEST_MODE || window.parent === window)) return
     this.state = 'connecting'
+    this.note(`connecting (framed by ${this.host || 'an unknown page'}; trusted hosts: ${TRUSTED.join(', ')})`)
     this.linked = load()
       .then(({ createKookClient }) => {
-        const client = (this.client = createKookClient())
+        const client = (this.client = createKookClient(
+          HOST_ORIGINS.length ? { allowedHostOrigins: HOST_ORIGINS } : undefined
+        ))
         window.addEventListener('pagehide', () => client.destroy(), { once: true })
         client.onConnectionChanged((connection) => {
           if (connection.state === 'connected') {
-            // A recovered connection has a new epoch: read the host's state again, once, and tell it again that
-            // the game is loaded. The SDK does not replay that for us, and the host merges a repeated result.
-            if (this.epoch >= 0 && connection.epoch !== this.epoch)
+            // A recovered connection (a new epoch, or connected again after a drop): read the host's state again,
+            // once, and tell it again that the game is loaded. The SDK does not replay that for us, and the host
+            // merges a repeated result. A new authorisation is not asked for by itself.
+            const recovered = this.epoch >= 0 && (connection.epoch !== this.epoch || this.state === 'unavailable')
+            this.epoch = connection.epoch
+            if (recovered && !this.recovering) {
+              this.recovering = true
               void client
                 .ready()
                 .then(() => {
                   if (this.state === 'closed') return
                   this.state = 'ready'
+                  this.reason = ''
                   this.reported = false
                   this.attempts = 0
+                  this.note('reconnected')
                   this.flush()
                 })
                 .catch(() => {})
-            this.epoch = connection.epoch
+                .finally(() => {
+                  this.recovering = false
+                })
+            }
           } else if (connection.state === 'disconnected' && this.state === 'ready') {
             // the binding is gone; nothing in the game depends on it, so play goes on
             this.state = 'unavailable'
             this.reason = connection.reason ?? 'CHANNEL_CLOSED'
+            this.note(`disconnected (${this.reason})`)
           }
         })
         return client.ready().then(() => {
           this.state = 'ready'
+          this.note('ready')
+          this.listen(client)
+          // the load result, if the title is already up, and after it the sign-in
           this.flush()
-          if (client.hasCapability('auth.onStateChanged'))
-            void client.auth
-              .onStateChanged((snapshot) => {
-                if (snapshot.status === 'revoked') this.auth = 'revoked'
-                else if (this.auth === 'asking' || this.auth === 'revoked') return
-                // a consent given earlier still stands (or no longer does): the host's word on it
-                else if (snapshot.status === 'authorized') this.auth = 'authorized'
-                else if (this.auth === 'authorized') {
-                  this.auth = 'none'
-                  this.obtained = false
-                }
-              })
-              .catch(() => {})
-          if (!client.hasCapability('lifecycle.onStateChanged')) return
-          return client.lifecycle
-            .onStateChanged((snapshot) => {
-              if (snapshot.status === 'closed') {
-                this.state = 'closed'
-                this.onClosed?.()
-              } else this.onVisibility?.(snapshot.visibility === 'hidden')
-            })
-            .then(() => undefined)
         })
       })
       .catch((error: unknown) => {
@@ -144,7 +166,63 @@ export class Kook {
         // the player. The game is already running; it just is not a KOOK session.
         if (this.state !== 'closed') this.state = 'unavailable'
         this.reason = (error as { code?: string })?.code ?? 'UNKNOWN'
+        this.note(
+          `not connected (${this.reason})` +
+            (this.hostTrusted
+              ? ''
+              : `: ${this.host} is not a KOOK host this build trusts — add it to VITE_KOOK_HOST_ORIGINS and rebuild`)
+        )
       })
+  }
+  /**
+   * The page this one is framed by, as the browser reports it. Only for saying what went wrong: which hosts are
+   * answered is fixed when the game is built, never read from here.
+   */
+  get host() {
+    try {
+      const above = location.ancestorOrigins
+      if (above?.length) return above[0]
+      return document.referrer ? new URL(document.referrer).origin : ''
+    } catch {
+      return ''
+    }
+  }
+  /** That page is one of the KOOK hosts this build answers to (or cannot be told). */
+  get hostTrusted() {
+    const host = this.host
+    return !host || TRUSTED.includes(host)
+  }
+  /**
+   * Follow the host's authorisation and lifecycle events. Neither subscription is needed to play or to sign in, so
+   * a host that refuses one leaves the session exactly as it is.
+   */
+  private listen(client: KookClient) {
+    if (client.hasCapability('auth.onStateChanged'))
+      void client.auth
+        .onStateChanged((snapshot) => {
+          if (snapshot.status === 'revoked') this.auth = 'revoked'
+          else if (this.auth === 'asking' || this.auth === 'revoked') return
+          // a consent given earlier still stands (or no longer does): the host's word on it
+          else if (snapshot.status === 'authorized') this.auth = 'authorized'
+          else if (this.auth === 'authorized') {
+            this.auth = 'none'
+            this.obtained = false
+          }
+        })
+        .catch(() => {})
+    if (client.hasCapability('lifecycle.onStateChanged'))
+      void client.lifecycle
+        .onStateChanged((snapshot) => {
+          if (snapshot.status === 'closed') {
+            this.state = 'closed'
+            this.onClosed?.()
+          } else this.onVisibility?.(snapshot.visibility === 'hidden')
+        })
+        .catch(() => {})
+  }
+  /** One line for the browser console on what the KOOK session is doing. Never the authorisation code. */
+  private note(text: string) {
+    if (!TEST_MODE) console.info(`[VANTA] KOOK: ${text}`)
   }
 
   /** The title screen is up and can be played (true), or the game could not load (false). */
@@ -163,6 +241,7 @@ export class Kook {
     if (!client.hasCapability('lifecycle.reportLoadResult')) {
       // an older host that does not take load results
       this.reported = true
+      this.greet()
       return
     }
     this.reporting = true
@@ -173,6 +252,8 @@ export class Kook {
         () => {
           this.reporting = false
           this.reported = true
+          this.note(`load result reported (${this.usable ? 'loaded' : 'failed'})`)
+          this.greet()
         },
         (error: unknown) => {
           this.reporting = false
@@ -180,6 +261,8 @@ export class Kook {
           // the host already holds a result for this load, or this client is finished: nothing more to send
           if (code === 'STATE_CONFLICT' || code === 'DESTROYED' || attempt >= 4) {
             this.reported = true
+            this.note(`load result not taken (${code ?? 'UNKNOWN'})`)
+            this.greet()
             return
           }
           window.setTimeout(() => this.flush(), this.retryMs)
@@ -188,10 +271,21 @@ export class Kook {
   }
 
   /**
-   * Sign in with KOOK: `session.get()` with the `get_user_info` scope. Call it from the player's own key or click
-   * (the title's first press). KOOK shows its consent prompt if the player has not agreed before, and answers
-   * straight away if they have. Always resolves, with where the authorisation then stands; declining is an
-   * ordinary answer and nothing in the game depends on agreeing. Outside KOOK it does nothing.
+   * The game's own, single request for the player's authorisation: made once KOOK has answered and has been told
+   * the game is loaded, so the consent prompt comes up over the title screen — the order KOOK's sample game uses.
+   * A game that failed to load does not ask.
+   */
+  private greet() {
+    if (this.greeted || !this.usable) return
+    this.greeted = true
+    void this.authorize()
+  }
+  /**
+   * Sign in with KOOK: `session.get()` with the `get_user_info` scope. It is asked once by itself (see `greet`);
+   * after that, only from the player's own key or click. KOOK shows its consent prompt if the
+   * player has not agreed before, and answers straight away if they have. Always resolves, with where the
+   * authorisation then stands; declining is an ordinary answer and nothing in the game depends on agreeing.
+   * Outside KOOK it does nothing.
    *
    * The call returns a one-time code meant for a game server to exchange for the player's identity. VANTA has no
    * server, so the code is dropped unread: it is never kept, logged or sent anywhere, and the game still knows
@@ -212,27 +306,79 @@ export class Kook {
     // With no server to issue it, the transaction id is made here: random, and used for this one request only.
     const state = transaction(),
       epoch = this.epoch
+    let reason = '',
+      pending: Promise<SessionCodeResult>
     this.auth = 'asking'
-    return client.session
-      .get({ state, scopes: KOOK_SCOPES })
+    this.authReason = ''
+    // whoever asked, the game's own single request is used up: it never follows a request with another
+    this.greeted = true
+    this.note('asking for authorisation (get_user_info)')
+    try {
+      pending = client.session.get({ state, scopes: KOOK_SCOPES })
+    } catch (error) {
+      pending = Promise.reject(error)
+    }
+    return pending
       .then(
-        (result): KookAuth =>
+        (result): KookAuth => {
           // an answer for another request, or for a connection that has since been replaced, is not ours
-          result.state !== state || this.epoch !== epoch
-            ? 'failed'
-            : result.status === 'authorized'
-              ? 'authorized'
-              : 'cancelled',
-        (): KookAuth => 'failed'
+          if (result.state !== state) reason = 'STATE_MISMATCH'
+          else if (this.epoch !== epoch) reason = 'CONNECTION_CHANGED'
+          else return result.status === 'authorized' ? 'authorized' : 'cancelled'
+          return 'failed'
+        },
+        (error: unknown): KookAuth => {
+          reason = (error as { code?: string })?.code ?? 'UNKNOWN'
+          return 'failed'
+        }
       )
       .then((auth) => {
         // revoked, or closed, while the prompt was up: that stands, and the late answer is dropped
         if (this.auth === 'asking') {
           this.auth = this.state === 'closed' ? 'none' : auth
+          this.authReason = this.auth === 'failed' ? reason : ''
           this.obtained = this.auth === 'authorized'
         }
+        this.note(`authorisation ${this.auth}${this.authReason ? ` (${this.authReason})` : ''}`)
         return this.auth
       })
+  }
+  /** Whether a row to ask for the authorisation (again) belongs in the terminal: in KOOK, while it is not held. */
+  get signInOffered() {
+    return this.state === 'ready' && this.auth !== 'authorized' && this.auth !== 'revoked'
+  }
+  /**
+   * Ask again, from the terminal. Like fullscreen, the keyboard path calls this inside the key event itself
+   * (`fromEvent`), and the same confirm seen a frame later by the game loop is then ignored.
+   */
+  signIn(fromEvent = true) {
+    const now = performance.now()
+    if (fromEvent) this.lastSignIn = now
+    else if (now - this.lastSignIn < 500) return
+    void this.authorize()
+  }
+  /** Where the KOOK session stands, in one line for the terminal. Empty when the game is not in a frame at all. */
+  get statusLine() {
+    if (this.state === 'standalone') return ''
+    if (this.state === 'connecting') return 'KOOK · 连接中'
+    if (this.state === 'closed') return 'KOOK · 已关闭'
+    if (this.state === 'unavailable') {
+      // The usual cause inside one of KOOK's test environments: its page is not a host this build was told to
+      // trust, so the SDK never answered it. Name that page rather than the timeout it ends in.
+      const stranger = this.reason === 'BOOTSTRAP_TIMEOUT' && !this.hostTrusted && /^https:\/\//.test(this.host)
+      return stranger
+        ? `KOOK · 未连接（宿主 ${this.host.slice(8)} 未受信任）`
+        : `KOOK · 未连接（${this.reason || 'UNKNOWN'}）`
+    }
+    const auth: Record<KookAuth, string> = {
+      none: '未申请授权',
+      asking: '等待授权',
+      authorized: '已授权',
+      cancelled: '授权已取消',
+      failed: `授权失败（${this.authReason || 'UNKNOWN'}）`,
+      revoked: '授权已撤销',
+    }
+    return `KOOK · 已连接 · ${auth[this.auth]}`
   }
 
   /** The host offers this optional ability in the current session. */
@@ -285,5 +431,7 @@ export const kook = new Kook()
 // Fullscreen has to be asked for inside the user's own key event, not a frame later from the game loop.
 if (!TEST_MODE)
   window.addEventListener('keydown', (event) => {
-    if (!event.repeat && kook.wantsFullscreen?.(event)) kook.fullscreen()
+    if (event.repeat) return
+    if (kook.wantsFullscreen?.(event)) kook.fullscreen()
+    else if (kook.wantsSignIn?.(event)) kook.signIn()
   })
